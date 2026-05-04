@@ -1,0 +1,54 @@
+# Dashboard Wireframe
+
+## Main Dashboard Layout
+
+```
++---------------------------------------------------+
+| Prequal Platform - Subcontractor Compliance Portal  |
++---------------------------------------------------+
+|                                                   |
+|  [COMPANY LOGO]            [User: John Contractor] |
+|                                                   |
++---------------------------------------------------+
+
++---------------------------------------------------+
+| SUBCONTRACTOR COMPLIANCE DASHBOARD                 |
++---------------------------------------------------+
+
++---------------------------------------+
+| SUBCONTRACTOR PROFILE                |
++---------------------------------------+
+| Company Name: [______________________] |
+| Contact Person: [____________________] |
+| Contact Email: [____________________] |
+| Phone: [______________________________] |
+| Address: [___________________________]  |
+|            [Update Profile]          |
++---------------------------------------+
+
++---------------------------------------+
+| CERTIFICATION ALERTS                   |
++---------------------------------------+
+| ! CRITICAL  Certification expiring    |
+|             in 30 days               |
+|   [View Details]                       |
+| ~ WARNING    Documentation requires    |
+|             verification                 |
+|   [View Details]                       |
++---------------------------------------+
+
++---------------------------------------+
+| CREDENTIAL UPLOAD PORTAL               |
++---------------------------------------+
+| Upload Certification Documents:       |
+| [Choose Files]                         |
+|                                       |
+| Document Type: [Select Document Type]     |
+|              [Insurance Certificate]   |
+|              [License]               |
+|              [OSHA Training Certificate]|
+|              [Select Document Type]     |
+|                                       |
+| [Submit Documents]                      |
++---------------------------------------+
+```

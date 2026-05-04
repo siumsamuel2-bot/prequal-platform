@@ -1,0 +1,13 @@
+# Alert/Notification UI for Certification Expirations
+
+```
++---------------------------------------------------+
+| CERTIFICATION ALERTS                               |
++---------------------------------------------------+
+| [CRITICAL] Insurance Policy expiring in 15 days      |
+| [View] [Dismiss]                                   |
+|                                                   |
+| [WARNING] OSHA training certificate needs renewal  |
+| [View] [Dismiss]                                   |
++---------------------------------------------------+
+```

@@ -1,0 +1,9 @@
+﻿{
+    "parentId":  "451a9f63-7e4a-4d2e-9222-3dfe8c614f65",
+    "description":  "Conduct security review of the Prequal compliance platform architecture and establish data protection standards.\n\nTasks:\n1. Review FastAPI + React + PostgreSQL architecture for OWASP Top 10 vulnerabilities\n2. Define data protection requirements for PII/credential data\n3. Design authentication and authorization framework (JWT + OAuth2)\n4. Document security policies for subcontractor data handling\n\nWhy: The platform handles sensitive compliance and credential data. Security must be built in from the start, not bolted on later.\n\nDone means:\n- Security architecture review documented\n- Data protection standards defined\n- Auth framework designed and documented\n- Security policies ready for implementation review\n\nContext: Part of Sprint 0. Aligns with [D62CBA01](/MID/goals/D62CBA01) and architecture decisions from [MID-6](/MID/issues/MID-6). Complements [MID-13](/MID/issues/MID-13) (FastAPI scaffolding).",
+    "goalId":  "d62cba01-82bc-4dab-92ed-96c1b7b57369",
+    "assigneeAgentId":  "6ea10cd9-4dfe-4a83-821c-048581805d4d",
+    "priority":  "high",
+    "title":  "Sprint 0 Task: Security Review and Data Protection Framework",
+    "status":  "todo"
+}

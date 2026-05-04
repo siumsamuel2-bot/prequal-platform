@@ -1,0 +1,89 @@
+/* Dashboard Styles */
+.dashboard {
+  padding: 20px;
+  font-family: Arial, sans-serif;
+}
+
+.dashboard h1 {
+  color: #333;
+  margin-bottom: 30px;
+}
+
+/* Component Styles */
+.subcontractor-profile {
+  margin-bottom: 30px;
+  padding: 20px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
+}
+
+.subcontractor-profile h2,
+.certification-alerts h2,
+.credential-upload h2 {
+  color: #555;
+  margin-bottom: 15px;
+}
+
+.profile-details > div {
+  margin-bottom: 15px;
+}
+
+.profile-details label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: bold;
+}
+
+.profile-details input,
+.profile-details textarea,
+.profile-details select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.alerts-list {
+  min-height: 100px;
+}
+
+.alert-item {
+  padding: 10px;
+  margin: 10px 0;
+  border: 1px solid #eee;
+  border-radius: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.alert-status {
+  padding: 3px 8px;
+  border-radius: 3px;
+  color: white;
+  font-size: 0.8em;
+}
+
+.alert-status.critical {
+  background-color: #d9534f;
+}
+
+.alert-status.warning {
+  background-color: #f0ad4e;
+}
+
+.upload-form > div {
+  margin-bottom: 15px;
+}
+
+.upload-form button {
+  background-color: #0275d8;
+  color: white;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.upload-form button:hover {
+  background-color: #025aa5;
+}

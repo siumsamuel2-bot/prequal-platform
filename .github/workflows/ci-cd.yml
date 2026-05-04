@@ -1,0 +1,78 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Run tests
+        run: npm test
+      
+      - name: Lint code
+        run: npm run lint
+      
+      - name: Type check
+        run: npm run typecheck
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build application
+        run: npm run build
+      
+      - name: Docker build
+        run: |
+          docker build -t prequal-platform:${{ github.sha }} .
+          docker save prequal-platform:${{ github.sha }} | gzip > prequal-platform-${{ github.sha }}.docker.tar.gz
+      
+      - name: Upload Docker image
+        uses: actions/upload-artifact@v3
+        with:
+          name: docker-image
+          path: prequal-platform-${{ github.sha }}.docker.tar.gz
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v3
+        with:
+          name: docker-image
+          path: ./artifact
+      
+      - name: Load Docker image
+        run: |
+          gunzip -c ./artifact/prequal-platform-${{ github.sha }}.docker.tar.gz | docker load
+      
+      - name: Deploy to production (placeholder)
+        run: echo "Deploying to production - replace with actual deployment logic"

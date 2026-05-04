@@ -1,0 +1,62 @@
+# Multi-Subcontractor Dashboard Layout Wireframe
+
+## Visual Layout
+
+```
++-------------------------------------------------------------------------------------+
+| [COMPANY LOGO]                                              [User: Project Manager] |
++-------------------------------------------------------------------------------------+
+| SUBCONTRACTOR COMPLIANCE DASHBOARD                                                  |
++-------------------------------------------------------------------------------------+
+| [Search: ________________] [Filter: All v] [Sort: Name A-Z v] [Refresh]              |
++-------------------------------------------------------------------------------------+
+
+## DASHBOARD SUMMARY
++-------------------------------------------------------------------------------------+
+| TOTAL SUBCONTRACTORS: 24    COMPLIANT: 18    NON-COMPLIANT: 6                         |
++-------------------------------------------------------------------------------------+
+| COMPLIANCE SCORE TREND: [#####---------------] 35% (↓ from last month: 42%)        |
++-------------------------------------------------------------------------------------+
+
+## SUBCONTRACTOR LIST
++----+--------------------------------+----------------+-----------+------------------+
+| ID | Company Name                   | Primary Contact    | Status    | Actions            |
++----+--------------------------------+----------------+-----------+------------------+
+| 01 | ABC Construction Co.          | John Smith       | [COMPLIANT] | [VIEW] [HISTORY]  |
+| 02 | XYZ Industrial Services       | Mary Johnson      | [WARNING]  | [VIEW] [HISTORY]  |
+| 03 | Delta Builders Inc.          | Robert Williams     | [PENDING]  | [VIEW] [HISTORY]  |
+| 04 | Premium Contractors LLC       | Linda Brown       | [EXPIRED]  | [VIEW] [HISTORY]  |
++----+--------------------------------+----------------+-----------+------------------+
+
+## COMPLIANCE CHART
++-------------------------------------------------------------------------------------+
+| [##### Compliance Score Distribution Chart #######]                                 |
++-------------------------------------------------------------------------------------+
+
+[PREV] 1 2 3 ... [NEXT]                                                             |
++-------------------------------------------------------------------------------------+
+```
+
+## Key Features
+
+1. **Dashboard Header**
+   - Search functionality to find specific subcontractors
+   - Filter options (All, Compliant, Non-Compliant, Pending)
+   - Sort options (Name A-Z, Score High-Low, etc.)
+   - Refresh button to update data
+
+2. **Dashboard Summary**
+   - Key metrics display
+   - Compliance score trend with historical comparison
+
+3. **Subcontractor List**
+   - Table view with key information
+   - Color-coded status indicators:
+     * COMPLIANT (Green)
+     * WARNING (Yellow)
+     * PENDING (Orange)
+     * EXPIRED (Red)
+   - Action buttons for each record
+
+4. **Pagination Controls**
+   - Navigation between pages of results

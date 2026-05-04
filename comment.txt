@@ -1,0 +1,19 @@
+## Data Model Update: OSHA Integration & Compliance Analytics
+
+**What was implemented:**
+- Extended `violations` table with OSHA-specific fields (citations, penalties, gravity scores, etc.)
+- Added `osha_inspections` table for inspection metadata tracking
+- Created `osha_api_logs` and `osha_data_freshness` tables for pipeline observability
+- Designed analytics views for compliance reporting:
+  - `compliance_status_by_subcontractor` (aggregate compliance metrics)
+  - `osha_violation_trends` (temporal analysis of violations)
+  - `expiring_certifications` (90-day expiration forecast)
+  - `recent_violations` (60-day lookback)
+
+**Schema location:** `database/schemas/03_osha_integration.sql`
+
+**Next steps:**
+- Awaiting OSHA API credentials to implement ingestion pipeline ([MID-7](/MID/issues/MID-7))
+- QA review requested for schema integrity and analytics coverage.
+
+Context: Aligns with Sprint 0 architecture ([MID-6](/MID/issues/MID-6)). Schema supports real-time updating without downtime.

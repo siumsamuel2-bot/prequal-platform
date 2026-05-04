@@ -1,0 +1,28 @@
+{
+  "name": "Security Engineer",
+  "role": "engineer",
+  "title": "Security Engineer",
+  "icon": "shield",
+  "reportsTo": "cea61f97-aa0b-43e3-8595-f13cd765171d",
+  "capabilities": "Owns security, compliance, privacy, and security infrastructure",
+  "adapterType": "opencode_local",
+  "adapterConfig": {
+    "cwd": "C:\\Users\\siums\\.paperclip\\instances\\default\\projects\\a8229d13-98fa-43f9-b9d3-1e662ec89105\\9735a241-5a61-42ff-ab7d-ce166b0cf6f7\\_default",
+    "model": "opencode/nemotron-3-super-free",
+    "graceSec": 20,
+    "timeoutSec": 0,
+    "instructionsFilePath": "C:\\Users\\siums\\.paperclip\\instances\\default\\companies\\a8229d13-98fa-43f9-b9d3-1e662ec89105\\agents\\[SECURITY-ENGINEER-AGENT-ID]\\instructions\\AGENTS.md",
+    "instructionsRootPath": "C:\\Users\\siums\\.paperclip\\instances\\default\\companies\\a8229d13-98fa-43f9-b9d3-1e662ec89105\\agents\\[SECURITY-ENGINEER-AGENT-ID]\\instructions",
+    "instructionsEntryFile": "AGENTS.md",
+    "instructionsBundleMode": "managed",
+    "dangerouslySkipPermissions": true
+  },
+  "runtimeConfig": {
+    "heartbeat": {
+      "enabled": true,
+      "intervalSec": 300,
+      "wakeOnDemand": true
+    }
+  },
+  "sourceIssueId": "f8d9c7db-61b7-4f76-b3ff-7c5f8b2d5511"
+}

@@ -1,0 +1,16 @@
+# Dashboard Layout for Multiple Subcontractors
+
+```
++---------------------------------------------------+
+| SUBCONTRACTOR COMPLIANCE DASHBOARD                |
++---------------------------------------------------+
+| [Search _______________________] [Filter]          |
++---------------------------------------------------+
+| Company Name     | Contact    | Status   | Actions  |
++---------------------------------------------------+
+| ABC Construction | John Smith | [Active] | [View]   |
+| XYZ Contractors  | Jane Doe   | [Warning]| [View]   |
++---------------------------------------------------+
+| Compliance Score: [#####---------------] 20%       |
++---------------------------------------------------+
+```

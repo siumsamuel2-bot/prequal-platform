@@ -1,0 +1,66 @@
+# Subcontractor Compliance Profile View Wireframe
+
+## Visual Layout
+
+```
++-------------------------------------------------------------------------------------+
+| [COMPANY LOGO]                                              [User: John Contractor] |
++-------------------------------------------------------------------------------------+
+| SUBCONTRACTOR COMPLIANCE PROFILE                                                    |
++-------------------------------------------------------------------------------------+
+|                                                                                     |
+|  [EDIT] [HISTORY] [EXPORT]                                                         |
+|                                                                                     |
+|  COMPANY INFORMATION                                                                |
+|  ┌─────────────────────────────────────────────────────────────────────────────┐  |
+|  │ Company Name:        [ABC Construction Co.                          ]          │  |
+|  │ DBA Name:            [ABC Co.                                       ]          │  |
+|  │ Company Address:     [123 Main Street                                ]          │  |
+|  │                      [Anytown, ST 12345                                ]          │  |
+|  │ Phone Number:       [ (555) 123-4567                              ]          │  |
+|  │ Website:             [ www.abccompany.com                            ]          │  |
+|  └─────────────────────────────────────────────────────────────────────────────┘  |
+|                                                                                     |
+|  PRIMARY CONTACT                                                                    |
+|  ┌─────────────────────────────────────────────────────────────────────────────┐  |
+|  │ Contact Name:        [John Smith                                            ]  │  |
+|  │ Contact Title:       [Project Manager                                        ]  │  |
+|  │ Contact Email:       [jsmith@abccompany.com                                ]  │  │
+|  │ Contact Phone:       [ (555) 987-6543                              ]          │  │
+|  └─────────────────────────────────────────────────────────────────────────────┘  |
+|                                                                                     |
+|  COMPLIANCE STATUS                                                                  |
+|  ┌─────────────────────────────────────────────────────────────────────────────┐  |
+|  │ Overall Status:      [COMPLIANT]                                               │  |
+|  │ Compliance Score:    [85% ████████████████████░░░░░░░░░░ 85/100]              │  |
+|  │ Last Updated:        [2026-04-25]                                               │  |
+|  └─────────────────────────────────────────────────────────────────────────────┘  |
+|                                                                                     |
+|  [SAVE CHANGES] [CANCEL] [VIEW DOCUMENTS]                                            |
++-------------------------------------------------------------------------------------+
+```
+
+## Key Features
+
+1. **Header Section**
+   - Company logo and user information
+   - Action buttons (Edit, History, Export)
+
+2. **Company Information Section**
+   - Company name and DBA name
+   - Full address with multi-line input
+   - Contact information including phone and website
+
+3. **Primary Contact Section**
+   - Contact person details
+   - Title and communication methods
+
+4. **Compliance Status Section**
+   - Visual compliance indicator
+   - Progress bar for compliance score
+   - Last updated timestamp
+
+5. **Action Buttons**
+   - Save Changes - commits all modifications
+   - Cancel - reverts changes
+   - View Documents - navigates to document management
