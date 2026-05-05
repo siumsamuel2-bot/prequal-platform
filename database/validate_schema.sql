@@ -212,6 +212,7 @@ $$;
 -- 8. DATA QUALITY - SEED DATA INTEGRITY
 -- =========================================
 DO $$
+DECLARE
     v_expired_certs INTEGER;
     v_valid_subs INTEGER;
     v_open_violations INTEGER;

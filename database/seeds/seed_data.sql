@@ -181,7 +181,7 @@ VALUES
 INSERT INTO alert_notifications (id, certification_id, alert_type, scheduled_for, sent_at, status, method, recipient, subject, body, created_at, updated_at)
 VALUES
     -- Pending alert for Riverbend cert expiring in 29 days (Should trigger 30-day notice)
-    ('ffffffff-3333-3333-3333-ffffffff3333', 'cccccccc-2222-2222-2222-cccccccc2222', 'expiration_approaching', NOW() + INTERVAL '1 day', NULL, 'pending', 'email', 'ana@riverbend-electric.com', 'Action Required: Electrical License Expiring in 29 Days', 'Your Master Electrical License expires on ' || (SELECT expiration_date FROM certifications WHERE id = 'cccccccc-2222-2222-2222-cccccccc2222') || '. Please renew before expiration.', NOW(), NOW()),
+    ('ffffffff-3333-3333-3333-ffffffff3333', 'cccccccc-2222-2222-2222-cccccccc2222', 'expiration_approaching', NOW() + INTERVAL '1 day', NULL, 'pending', 'email', 'ana@riverbend-electric.com', 'Action Required: Electrical License Expiring in 29 Days', 'Your Master Electrical License expires soon. Please renew before expiration.', NOW(), NOW()),
     -- Sent alert for Pinnacle cert expiring (historical)
     ('ffffffff-4444-4444-4444-ffffffff4444', 'cccccccc-3334-3333-3333-cccccccc3334', 'expiration_approaching', '2025-03-01 09:00:00-05', '2025-03-01 09:05:22-05', 'sent', 'email', 'david@pinnacleroofing.com', 'Reminder: Certified Roofing Technician Expiring in 30 Days', 'Your NRCA certification expires on 2025-03-31.', NOW(), NOW()),
     -- Failed alert (network issue)
