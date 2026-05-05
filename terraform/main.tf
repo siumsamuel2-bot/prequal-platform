@@ -149,6 +149,21 @@ resource "aws_ecs_cluster" "prequal_cluster" {
   }
 }
 
+# ECR Repository
+resource "aws_ecr_repository" "prequal_repo" {
+  name                 = "prequal-platform"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Name = "prequal-platform"
+  }
+}
+
 # Application Load Balancer
 resource "aws_lb" "prequal_alb" {
   name               = "prequal-alb"
@@ -215,6 +230,39 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_policy" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+resource "aws_iam_role_policy" "ecs_task_ecr_policy" {
+  name = "prequal-ecs-ecr-policy"
+  role = aws_iam_role.ecs_task_execution_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload"
+        ]
+        Resource = aws_ecr_repository.prequal_repo.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 # RDS Database
 resource "aws_db_subnet_group" "prequal_db_subnet_group" {
   name       = "prequal-db-subnet-group"
@@ -226,17 +274,17 @@ resource "aws_db_subnet_group" "prequal_db_subnet_group" {
 }
 
 resource "aws_db_instance" "prequal_db" {
-  identifier         = "prequal-db"
-  engine             = "postgres"
-  engine_version     = "15.4"
-  instance_class     = "db.t3.micro"
-  allocated_storage  = 20
-  name               = "prequal"
-  username           = "postgres"
-  password           = var.db_password
+  identifier = "prequal-db"
+  engine = "postgres"
+  engine_version = "15.4"
+  instance_class = "db.t3.micro"
+  allocated_storage = 20
+  db_name = "prequal"
+  username = "postgres"
+  password = var.db_password
   skip_final_snapshot = true
   vpc_security_group_ids = [aws_security_group.prequal_ecs_sg.id]
-  db_subnet_group_name   = aws_db_subnet_group.prequal_db_subnet_group.name
+  db_subnet_group_name = aws_db_subnet_group.prequal_db_subnet_group.name
 
   tags = {
     Name = "prequal-db"
@@ -254,17 +302,17 @@ resource "aws_elasticache_subnet_group" "prequal_redis_subnet_group" {
 }
 
 resource "aws_elasticache_replication_group" "prequal_redis" {
-  replication_group_id          = "prequal-redis"
-  description                   = "Redis cluster for Prequal platform"
-  engine                        = "redis"
-  node_type                     = "cache.t3.micro"
-  number_cache_clusters         = 1
-  automatic_failover_enabled    = false
-  subnet_group_name             = aws_elasticache_subnet_group.prequal_redis_subnet_group.name
-  security_group_ids            = [aws_security_group.prequal_ecs_sg.id]
-  maintenance_window            = "sun:05:00-sun:06:00"
-  snapshot_retention_limit      = 1
-  snapshot_window               = "05:00-06:00"
+  replication_group_id = "prequal-redis"
+  description = "Redis cluster for Prequal platform"
+  engine = "redis"
+  node_type = "cache.t3.micro"
+  num_cache_clusters = 1
+  automatic_failover_enabled = false
+  subnet_group_name = aws_elasticache_subnet_group.prequal_redis_subnet_group.name
+  security_group_ids = [aws_security_group.prequal_ecs_sg.id]
+  maintenance_window = "sun:05:00-sun:06:00"
+  snapshot_retention_limit = 1
+  snapshot_window = "05:00-06:00"
 
   tags = {
     Name = "prequal-redis"
@@ -273,20 +321,20 @@ resource "aws_elasticache_replication_group" "prequal_redis" {
 
 # ECS Task Definition
 resource "aws_ecs_task_definition" "prequal_task" {
-  family                   = "prequal-task"
-  network_mode             = "awsvpc"
+  family = "prequal-task"
+  network_mode = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "256"
-  memory                   = "512"
-  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+  cpu = "256"
+  memory = "512"
+  execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
 
   container_definitions = jsonencode([{
-    name      = "prequal-app"
-    image     = "${aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/prequal-platform:latest"
+    name = "prequal-app"
+    image = "${aws_ecr_repository.prequal_repo.repository_url}:latest"
     portMappings = [{
       containerPort = 3000
-      hostPort      = 3000
-      protocol      = "tcp"
+      hostPort = 3000
+      protocol = "tcp"
     }]
     environment = [
       { name = "NODE_ENV", value = "production" },
@@ -296,12 +344,22 @@ resource "aws_ecs_task_definition" "prequal_task" {
     logConfiguration = {
       logDriver = "awslogs"
       options = {
-        awslogs-group         = "/ecs/prequal-app"
-        awslogs-region        = var.aws_region
+        awslogs-group = "/ecs/prequal-app"
+        awslogs-region = var.aws_region
         awslogs-stream-prefix = "ecs"
       }
     }
   }])
+}
+
+# CloudWatch Log Group for ECS logs
+resource "aws_cloudwatch_log_group" "ecs_prequal" {
+  name = "/ecs/prequal-app"
+  retention_in_days = 30
+
+  tags = {
+    Name = "prequal-ecs-logs"
+  }
 }
 
 # ECS Service

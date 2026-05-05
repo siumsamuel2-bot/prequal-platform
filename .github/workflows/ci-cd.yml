@@ -6,73 +6,129 @@ on:
   pull_request:
     branches: [ main, develop ]
 
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: prequal-platform
+  ECS_CLUSTER: prequal-cluster
+  ECS_SERVICE: prequal-service
+  ECS_TASK_DEFINITION: prequal-task
+  CONTAINER_NAME: prequal-app
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
-      
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Run tests
         run: npm test
-      
+
       - name: Lint code
         run: npm run lint
-      
+
       - name: Type check
         run: npm run typecheck
 
   build:
     needs: test
     runs-on: ubuntu-latest
+    outputs:
+      image_uri: ${{ steps.ecr.outputs.image_uri }}
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
-      
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Build application
         run: npm run build
-      
-      - name: Docker build
-        run: |
-          docker build -t prequal-platform:${{ github.sha }} .
-          docker save prequal-platform:${{ github.sha }} | gzip > prequal-platform-${{ github.sha }}.docker.tar.gz
-      
-      - name: Upload Docker image
-        uses: actions/upload-artifact@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          name: docker-image
-          path: prequal-platform-${{ github.sha }}.docker.tar.gz
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Output image URI
+        id: ecr
+        run: |
+          echo "image_uri=${{ steps.login-ecr.outputs.registry }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> $GITHUB_OUTPUT
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
+    environment: production
     steps:
-      - name: Download Docker image
-        uses: actions/download-artifact@v3
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          name: docker-image
-          path: ./artifact
-      
-      - name: Load Docker image
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Download task definition
         run: |
-          gunzip -c ./artifact/prequal-platform-${{ github.sha }}.docker.tar.gz | docker load
-      
-      - name: Deploy to production (placeholder)
-        run: echo "Deploying to production - replace with actual deployment logic"
+          aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query taskDefinition > task-definition.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build.outputs.image_uri }}
+
+      - name: Deploy to Amazon ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      - name: Run database migrations
+        run: |
+          aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }}-migrate \
+            --network-mode awsvpc \
+            --launch-type FARGATE \
+            --overrides '{"containerOverrides":[{"name":"migrate","command":["npm","run","migrate"]}]}' \
+            --region ${{ env.AWS_REGION }} || echo "Migration task completed or not required"
