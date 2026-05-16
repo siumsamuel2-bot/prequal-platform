@@ -1,0 +1,158 @@
+version: '3.8'
+
+services:
+  # FastAPI Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: prequal-backend-staging
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Environment
+      - ENVIRONMENT=staging
+      - PYTHONUNBUFFERED=1
+      
+      # Database
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/prequal_staging
+      
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      
+      # Application settings
+      - APP_NAME=Prequal Platform
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      
+      # Security
+      - SECRET_KEY=${SECRET_KEY}
+      - ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=30
+      
+      # CORS
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:80
+      
+      # Rate limiting
+      - RATE_LIMIT_PER_MINUTE=60
+      
+      # OSHA API (if configured)
+      - OSHA_API_KEY=${OSHA_API_KEY:-}
+      
+      # SMTP (optional)
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - EMAIL_FROM=${EMAIL_FROM:-noreply@prequal.local}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    networks:
+      - prequal-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # React Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      target: production
+    container_name: prequal-frontend-staging
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      - NODE_ENV=staging
+      - VITE_API_URL=/api
+      - VITE_APP_NAME=Prequal Platform
+    depends_on:
+      - backend
+    networks:
+      - prequal-network
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: prequal-db-staging
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: prequal_staging
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - prequal-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d prequal_staging"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for caching and sessions
+  redis:
+    image: redis:7-alpine
+    container_name: prequal-redis-staging
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - prequal-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PGAdmin for database management (staging only)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: prequal-pgadmin-staging
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@prequal.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - db
+    networks:
+      - prequal-network
+
+networks:
+  prequal-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  pgadmin_data:
+    driver: local

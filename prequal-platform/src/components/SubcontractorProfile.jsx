@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { contractorApi, complianceApi } from '../api/client';
 import './SubcontractorProfile.css';
 
 const SubcontractorProfile = () => {
@@ -10,15 +11,60 @@ const SubcontractorProfile = () => {
     contactTitle: '',
     contactEmail: '',
     contactPhone: '',
-    website: '',
-    contactPhone: ''
+    website: ''
   });
 
   const [compliance, setCompliance] = useState({
-    status: 'COMPLIANT',
-    score: 85,
-    lastUpdated: '2026-04-25'
+    status: 'UNKNOWN',
+    score: 0,
+    lastUpdated: ''
   });
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [certifications, setCertifications] = useState([]);
+  const [violations, setViolations] = useState([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [contractors, status, certs, viols] = await Promise.all([
+          contractorApi.getAll(),
+          complianceApi.getStatus(),
+          contractorApi.getCertifications('1'),
+          contractorApi.getViolations('1')
+        ]);
+
+        if (contractors.length > 0) {
+          const contractor = contractors[0];
+          setProfile({
+            companyName: contractor.company_name,
+            dbaName: '',
+            companyAddress: contractor.address,
+            contactName: contractor.contact_name,
+            contactTitle: '',
+            contactEmail: contractor.email,
+            contactPhone: contractor.phone,
+            website: ''
+          });
+        }
+
+        setCompliance({
+          status: status.overall_status,
+          score: status.compliance_score,
+          lastUpdated: status.last_updated
+        });
+
+        setCertifications(certs);
+        setViolations(viols);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load data');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchData();
+  }, []);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -33,7 +79,6 @@ const SubcontractorProfile = () => {
   };
 
   const handleCancel = () => {
-    // Reset to initial state
     setProfile({
       companyName: '',
       dbaName: '',
@@ -62,11 +107,14 @@ const SubcontractorProfile = () => {
     alert('Exporting data...');
   };
 
+  if (loading) return <div className="subcontractor-profile">Loading profile...</div>;
+  if (error) return <div className="subcontractor-profile error">{error}</div>;
+
   return (
     <div className="subcontractor-profile">
       <div className="header-section">
         <div className="logo">[COMPANY LOGO]</div>
-        <div className="user-info">User: John Contractor</div>
+        <div className="user-info">User: {profile.contactName || 'Admin'}</div>
         <div className="action-buttons">
           <button onClick={handleEdit}>EDIT</button>
           <button onClick={handleHistory}>HISTORY</button>
@@ -207,6 +255,40 @@ const SubcontractorProfile = () => {
             <label htmlFor="lastUpdated">Last Updated:</label>
             <span id="lastUpdated" className="compliance-value">{compliance.lastUpdated}</span>
           </div>
+        </div>
+      </div>
+
+      <div className="profile-section">
+        <h2>CERTIFICATIONS ({certifications.length})</h2>
+        <div className="section-content">
+          {certifications.length === 0 ? (
+            <p>No certifications on file.</p>
+          ) : (
+            <ul className="cert-list">
+              {certifications.map(cert => (
+                <li key={cert.id} className={`cert-item ${cert.status}`}>
+                  {cert.certification_type} - Expires: {cert.expiry_date}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      <div className="profile-section">
+        <h2>VIOLATIONS ({violations.length})</h2>
+        <div className="section-content">
+          {violations.length === 0 ? (
+            <p>No violations on record.</p>
+          ) : (
+            <ul className="violation-list">
+              {violations.map(viol => (
+                <li key={viol.id} className={`violation-item ${viol.status}`}>
+                  {viol.violation_type}: {viol.description} ({viol.date}) - {viol.status}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
       

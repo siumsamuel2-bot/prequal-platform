@@ -1,0 +1,1 @@
+[System.Environment]::GetEnvironmentVariables() | Format-Table | Out-String | Write-Host

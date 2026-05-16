@@ -1,0 +1,35 @@
+# Traefik Dynamic Configuration
+# This file is referenced by traefik.yml
+
+http:
+  routers:
+    backend-router:
+      rule: "Host(`prequal.yourcompany.com`) && PathPrefix(`/api`)"
+      service: backend-service
+      entryPoints:
+        - websecure
+      middlewares:
+        - strip-api-prefix
+
+    frontend-router:
+      rule: "Host(`prequal.yourcompany.com`)"
+      service: frontend-service
+      entryPoints:
+        - websecure
+
+  services:
+    backend-service:
+      loadBalancer:
+        servers:
+          - url: "http://backend:8000"
+
+    frontend-service:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:80"
+
+  middlewares:
+    strip-api-prefix:
+      stripPrefix:
+        prefixes:
+          - "/api"

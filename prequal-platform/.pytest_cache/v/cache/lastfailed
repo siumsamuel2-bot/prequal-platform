@@ -1,0 +1,13 @@
+{
+  "tests/test_alerts.py::TestAlertServiceScan::test_scan_marks_expired_certifications": true,
+  "tests/test_data_pipeline.py::TestDataQualityChecks::test_run_data_quality_respects_inactive": true,
+  "tests/test_data_pipeline.py::TestStateCredentialSync::test_load_state_credential_record_insert": true,
+  "tests/test_alerts_integration.py::TestAlertServiceIntegration": true,
+  "tests/test_alerts_integration.py::TestAlertEndpointsIntegration": true,
+  "tests/test_alerts_integration.py::TestAlertServiceIntegration::test_scan_flags_expired_certs": true,
+  "tests/test_alerts_integration.py::TestAlertServiceIntegration::test_scan_creates_alerts_at_warning_windows": true,
+  "tests/test_alerts_integration.py::TestAlertServiceIntegration::test_scan_deduplicates_same_day": true,
+  "tests/test_alerts_integration.py::TestAlertEndpointsIntegration::test_scan_endpoint_triggers_and_returns_summary": true,
+  "tests/test_data_pipeline.py::TestDataQualityChecks::test_run_data_quality_no_rules": true,
+  "tests/test_data_pipeline.py::TestAnalyticsViews::test_refresh_views_does_not_crash": true
+}

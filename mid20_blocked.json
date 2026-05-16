@@ -1,0 +1,4 @@
+{
+  "status": "blocked",
+  "comment": "## MID-20 Blocked: Waiting on MID-14 (Database Schema)\n\n**Implementation Status:** FastAPI-Database integration code is functionally complete (all routers, models, schemas implemented).\n\n**Blocker:** CTO commented that this task depends on MID-14 (Database Schema) completion by the Data Engineer. The database schema needs to be finalized before we can consider MID-20 fully done.\n\n**Who needs to act:** Data Engineer needs to complete MID-14.\n\n**What is ready:**\n- `app/database.py` - Async SQLAlchemy with PostgreSQL\n- `app/models/compliance.py` - 12 ORM models\n- `app/routers/compliance.py` - Full CRUD + compliance endpoints\n- `app/routers/auth.py` - JWT authentication\n- `app/schemas/compliance.py` - Pydantic V2 schemas\n- `api/main.py` - FastAPI app with CORS, rate limiting\n\nOnce MID-14 is complete, I can finalize database schema alignment and mark this done."
+}

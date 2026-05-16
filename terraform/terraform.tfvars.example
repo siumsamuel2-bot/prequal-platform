@@ -1,0 +1,15 @@
+# AWS Account ID - Replace with your actual account ID
+aws_account_id = "123456789012"
+
+# Database password - Replace with a secure password
+db_password = "change-me-to-secure-password"
+
+# AWS Region
+aws_region = "us-east-1"
+
+# VPC CIDR
+vpc_cidr = "10.0.0.0/16"
+
+# Subnet CIDRs
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
+private_subnet_cidrs = ["10.0.3.0/24", "10.0.4.0/24"]

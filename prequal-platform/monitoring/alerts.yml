@@ -1,0 +1,55 @@
+# Alert rules for Prequal Platform
+# These rules define when alerts should be triggered
+
+groups:
+  - name: prequal-alerts
+    rules:
+      # Service availability
+      - alert: ServiceDown
+        expr: up{job="prequal-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Prequal API service is down"
+          description: "The Prequal API service has been unreachable for more than 2 minutes."
+
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # High latency
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 10m
+        labels:
+          severity: medium
+        annotations:
+          summary: "High latency detected"
+          description: "95th percentile latency is {{ $value | humanizeDuration }} (threshold: 2s)"
+
+      # Database connection pool exhaustion
+      - alert: DatabasePoolExhaustion
+        expr: db_pool_active_connections / db_pool_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: "Database connection pool nearly exhausted"
+          description: "Database pool is {{ $value | humanizePercentage }} full"
+
+      # Disk space low
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes > 0.8
+        for: 10m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Disk space running low"
+          description: "Disk usage is above 80%"

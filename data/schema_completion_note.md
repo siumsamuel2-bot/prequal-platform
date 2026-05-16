@@ -28,4 +28,4 @@
 - [Queries](data/queries.sql) for common operations
 - [FastAPI models](app/models/compliance.py) (Pydantic)
 
-**Status**: Ready for implementation. Assigning to QA Engineer for review.
+**Status**: Deprecated. See `database/README.md` for the authoritative schema. This note preserved for historical context only.

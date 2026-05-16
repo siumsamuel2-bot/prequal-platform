@@ -1,0 +1,77 @@
+version: '3.8'
+
+# Optional: ELK Stack for centralized logging
+# Use this when you need production-grade log aggregation
+# For staging, use docker-compose.staging.yml instead
+
+services:
+  # Elasticsearch - Search and analytics engine
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: prequal-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    networks:
+      - logging-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Logstash - Log processing pipeline
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.11.0
+    container_name: prequal-logstash
+    environment:
+      - "LS_JAVA_OPTS=-Xmx256m -Xms256m"
+    volumes:
+      - ./logging/logstash/pipeline:/usr/share/logstash/pipeline:ro
+      - ./logging/logstash/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+    ports:
+      - "5044:5044"  # Beats input
+      - "5000:5000/tcp"  # TCP input
+    depends_on:
+      - elasticsearch
+    networks:
+      - logging-network
+
+  # Kibana - Visualization and dashboard
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: prequal-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - logging-network
+
+  # Filebeat - Log shipper (alternative: use Python logging directly)
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.11.0
+    container_name: prequal-filebeat
+    volumes:
+      - ./logging/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - ./logs:/app/logs:ro
+    depends_on:
+      - logstash
+    networks:
+      - logging-network
+
+networks:
+  logging-network:
+    driver: bridge
+
+volumes:
+  elasticsearch_data:
+    driver: local

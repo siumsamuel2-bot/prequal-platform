@@ -34,6 +34,7 @@
   },
   "jest": {
     "testEnvironment": "jsdom",
+    "setupFiles": ["<rootDir>/src/__mocks__/import.meta.js"],
     "moduleNameMapper": {
       "\\.(css|less|scss|sass)$": "identity-obj-proxy"
     }

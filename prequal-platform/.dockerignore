@@ -1,0 +1,71 @@
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+dist
+build
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Environment
+.env
+.env.local
+.env.*.local
+*.local
+!.env.example
+
+# Python
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.nyc_output
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Cache
+.cache
+.eslintcache
+.stylelintcache
+
+# Archives
+*.tgz
+*.tar
+*.tar.gz
+
+# Documentation (keep README)
+!README.md
+docs/
+
+# Tests
+tests/
+
+# Security
+secrets/
+*.key
+*.pem
+*.crt
