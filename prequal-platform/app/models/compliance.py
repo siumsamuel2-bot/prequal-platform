@@ -34,6 +34,7 @@ class Subcontractor(Base):
     license_state: Mapped[Optional[str]] = mapped_column(String(50))
     license_expiration: Mapped[Optional[date]] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(50), default="active")
+    org_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -45,6 +46,7 @@ class Subcontractor(Base):
     __table_args__ = (
         Index("idx_subcontractors_status", "status"),
         Index("idx_subcontractors_license_expiration", "license_expiration"),
+        Index("idx_subcontractors_org_id", "org_id"),
     )
 
 
@@ -68,6 +70,7 @@ class Project(Base):
     country: Mapped[str] = mapped_column(String(100), default="USA")
     status: Mapped[str] = mapped_column(String(50), default="planning")
     budget: Mapped[Optional[float]] = mapped_column(Numeric(15, 2))
+    org_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -76,6 +79,7 @@ class Project(Base):
 
     __table_args__ = (
         Index("idx_projects_status", "status"),
+        Index("idx_projects_org_id", "org_id"),
     )
 
 
