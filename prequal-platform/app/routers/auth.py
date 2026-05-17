@@ -1,4 +1,6 @@
 import os
+import secrets
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 from uuid import UUID
@@ -7,6 +9,7 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
+from pydantic import BaseModel, EmailStr
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -19,15 +22,31 @@ from app.schemas.compliance import (
     UserWithTeams
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
 SECRET_KEY = os.getenv("SECRET_KEY", "54EC409A2CC6B37C639C332264284D9A89CC5546B2022CA3A910178A3A202C53")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 REFRESH_TOKEN_EXPIRE_DAYS = 7
+PASSWORD_RESET_TOKEN_EXPIRE_HOURS = 1
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+class MessageResponse(BaseModel):
+    message: str
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -436,3 +455,49 @@ async def list_team_projects(
         }
         for p in projects
     ]
+
+
+@router.post("/password-reset-request", response_model=MessageResponse)
+async def request_password_reset(
+    request: PasswordResetRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    user = await get_user_by_email(db, request.email)
+    if not user:
+        return MessageResponse(message="If the email exists, a password reset link has been sent")
+    
+    reset_token = secrets.token_urlsafe(32)
+    expires = datetime.utcnow() + timedelta(hours=PASSWORD_RESET_TOKEN_EXPIRE_HOURS)
+    
+    user.password_reset_token = reset_token
+    user.password_reset_expires = expires
+    await db.commit()
+    
+    reset_url = f"https://prequal.example.com/reset-password?token={reset_token}"
+    logger.info(f"Password reset requested for {request.email}. Reset link: {reset_url}")
+    
+    return MessageResponse(message="If the email exists, a password reset link has been sent")
+
+
+@router.post("/password-reset/confirm", response_model=MessageResponse)
+async def confirm_password_reset(
+    request: PasswordResetConfirmRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(User).where(User.password_reset_token == request.token)
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    
+    if not user.password_reset_expires or user.password_reset_expires < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Reset token has expired")
+    
+    user.hashed_password = get_password_hash(request.new_password)
+    user.password_reset_token = None
+    user.password_reset_expires = None
+    await db.commit()
+    
+    return MessageResponse(message="Password has been reset successfully")

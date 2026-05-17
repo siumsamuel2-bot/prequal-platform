@@ -20,6 +20,8 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), default="viewer")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    password_reset_token: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    password_reset_expires: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -28,6 +30,7 @@ class User(Base):
     __table_args__ = (
         Index("idx_users_email", "email"),
         Index("idx_users_role", "role"),
+        Index("idx_users_password_reset_token", "password_reset_token"),
     )
 
 

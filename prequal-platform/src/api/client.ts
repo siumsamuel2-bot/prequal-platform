@@ -106,6 +106,12 @@ export const authApi = {
     apiClient.post<{ access_token: string; token_type: string }>('/auth/refresh', { refresh_token }),
 
   getTeams: () => apiClient.get<Team[]>('/auth/teams'),
+
+  requestPasswordReset: (email: string) =>
+    apiClient.post<{ message: string }>('/auth/password-reset-request', { email }),
+
+  confirmPasswordReset: (token: string, newPassword: string) =>
+    apiClient.post<{ message: string }>('/auth/password-reset/confirm', { token, new_password: newPassword }),
 };
 
 export const subcontractorApi = {
