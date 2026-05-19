@@ -6,6 +6,7 @@ Provides endpoints to:
 - Get alerts by project
 - Acknowledge an alert
 - Trigger a manual expiration scan
+- Manage alert preferences
 """
 
 from datetime import date, timedelta, datetime
@@ -20,11 +21,12 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.compliance import (
     AlertNotification, Certification, Subcontractor,
-    ProjectSubcontractor, Project
+    ProjectSubcontractor, Project, AlertPreference, NotificationPreferences
 )
 from app.schemas.compliance import (
     AlertNotificationResponse, AlertNotificationStatus,
-    AlertNotificationUpdate, AlertNotificationCreate, AlertWithContextResponse
+    AlertNotificationUpdate, AlertNotificationCreate, AlertWithContextResponse,
+    AlertPreferenceCreate, AlertPreferenceResponse
 )
 from app.services.alert_service import scan_expirations, get_alert_summary
 from app.routers.auth import get_current_user, TokenData
@@ -261,3 +263,94 @@ async def get_alerts_summary(
     """Get a summary of alert counts for a time window."""
     summary = await get_alert_summary(db, days=days)
     return summary
+
+
+@router.get("/preferences", response_model=AlertPreferenceResponse)
+async def get_alert_preferences(
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """Get alert preferences for the current user."""
+    result = await db.execute(
+        select(AlertPreference).where(AlertPreference.user_id == UUID(current_user.user_id))
+    )
+    prefs = result.scalar_one_or_none()
+    
+    if not prefs:
+        prefs = AlertPreference(
+            user_id=UUID(current_user.user_id),
+            certification_types=None,
+            advance_notice_days=30,
+            alert_methods=["email"],
+            is_active=True
+        )
+        db.add(prefs)
+        await db.commit()
+        await db.refresh(prefs)
+    
+    return prefs
+
+
+@router.post("/preferences", response_model=AlertPreferenceResponse)
+async def update_alert_preferences(
+    prefs: AlertPreferenceCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """Create or update alert preferences for the current user."""
+    result = await db.execute(
+        select(AlertPreference).where(AlertPreference.user_id == UUID(current_user.user_id))
+    )
+    db_prefs = result.scalar_one_or_none()
+    
+    if db_prefs:
+        db_prefs.certification_types = prefs.certification_types
+        db_prefs.advance_notice_days = prefs.advance_notice_days
+        db_prefs.alert_methods = prefs.alert_methods
+        db_prefs.is_active = prefs.is_active
+    else:
+        db_prefs = AlertPreference(
+            user_id=UUID(current_user.user_id),
+            certification_types=prefs.certification_types,
+            advance_notice_days=prefs.advance_notice_days,
+            alert_methods=prefs.alert_methods,
+            is_active=prefs.is_active
+        )
+        db.add(db_prefs)
+    
+    await db.commit()
+    await db.refresh(db_prefs)
+    return db_prefs
+
+
+@router.get("/notification-preferences", response_model=dict)
+async def get_notification_preferences(
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """Get full notification preferences for the current user."""
+    result = await db.execute(
+        select(NotificationPreferences).where(
+            NotificationPreferences.user_id == UUID(current_user.user_id)
+        )
+    )
+    prefs = result.scalar_one_or_none()
+    
+    if not prefs:
+        return {
+            "notify_on_cert_expiration": True,
+            "notify_on_cert_expiration_days": [30, 14, 7],
+            "notify_on_violation": True,
+            "email_enabled": True,
+            "sms_enabled": False
+        }
+    
+    return {
+        "notify_on_cert_expiration": prefs.notify_on_cert_expiration,
+        "notify_on_cert_expiration_days": prefs.notify_on_cert_expiration_days,
+        "notify_on_violation": prefs.notify_on_violation,
+        "email_enabled": prefs.email_enabled,
+        "sms_enabled": prefs.sms_enabled,
+        "digest_enabled": prefs.digest_enabled,
+        "digest_frequency": prefs.digest_frequency
+    }

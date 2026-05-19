@@ -1,20 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { subcontractorApi, Subcontractor } from '../api/client';
 
+const PAGE_SIZE = 20;
+
 const SubcontractorList = () => {
   const navigate = useNavigate();
-  const [subcontractors, setSubcontractors] = useState<Subcontractor[]>([]);
+  const [allSubcontractors, setAllSubcontractors] = useState<Subcontractor[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     const fetchSubcontractors = async () => {
+      setLoading(true);
       try {
         const data = await subcontractorApi.getAll();
-        setSubcontractors(data);
+        setAllSubcontractors(data);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load subcontractors');
       } finally {
@@ -24,17 +28,26 @@ const SubcontractorList = () => {
     fetchSubcontractors();
   }, []);
 
-  const filteredSubcontractors = subcontractors.filter(sub => {
-    const matchesSearch = 
-      sub.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (sub.contact_first_name && sub.contact_first_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      (sub.contact_last_name && sub.contact_last_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      sub.email.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = statusFilter === 'all' || sub.status === statusFilter;
-    
-    return matchesSearch && matchesStatus;
-  });
+  const filteredSubcontractors = useMemo(() => {
+    return allSubcontractors.filter(sub => {
+      const matchesSearch = 
+        sub.company_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (sub.contact_first_name && sub.contact_first_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        (sub.contact_last_name && sub.contact_last_name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        sub.email.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesStatus = statusFilter === 'all' || sub.status === statusFilter;
+      
+      return matchesSearch && matchesStatus;
+    });
+  }, [allSubcontractors, searchTerm, statusFilter]);
+
+  const totalCount = filteredSubcontractors.length;
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+  const paginatedSubcontractors = useMemo(() => {
+    const start = page * PAGE_SIZE;
+    return filteredSubcontractors.slice(start, start + PAGE_SIZE);
+  }, [filteredSubcontractors, page]);
 
   const handleViewProfile = (id: string) => {
     navigate(`/subcontractors/${id}`);
@@ -60,7 +73,7 @@ const SubcontractorList = () => {
             type="text"
             placeholder="Search by company, contact, or email..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => { setSearchTerm(e.target.value); setPage(0); }}
             className="search-input"
           />
         </div>
@@ -69,7 +82,7 @@ const SubcontractorList = () => {
           <label>Filter by status: </label>
           <select 
             value={statusFilter} 
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => { setStatusFilter(e.target.value); setPage(0); }}
             className="status-select"
           >
             <option value="all">All</option>
@@ -94,12 +107,12 @@ const SubcontractorList = () => {
             </tr>
           </thead>
           <tbody>
-            {filteredSubcontractors.length === 0 ? (
+            {paginatedSubcontractors.length === 0 ? (
               <tr>
                 <td colSpan={6}>No subcontractors found.</td>
               </tr>
             ) : (
-              filteredSubcontractors.map(sub => (
+              paginatedSubcontractors.map(sub => (
                 <tr key={sub.id}>
                   <td>{sub.company_name}</td>
                   <td>{sub.contact_first_name} {sub.contact_last_name}</td>
@@ -120,8 +133,28 @@ const SubcontractorList = () => {
         </table>
       </div>
 
+      {totalPages > 1 && (
+        <div className="pagination">
+          <button 
+            className="pagination-btn" 
+            onClick={() => setPage(p => Math.max(0, p - 1))}
+            disabled={page === 0}
+          >
+            Previous
+          </button>
+          <span className="pagination-info">Page {page + 1} of {totalPages}</span>
+          <button 
+            className="pagination-btn" 
+            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+            disabled={page >= totalPages - 1}
+          >
+            Next
+          </button>
+        </div>
+      )}
+
       <div className="list-summary">
-        Showing {filteredSubcontractors.length} of {subcontractors.length} subcontractors
+        Showing {paginatedSubcontractors.length} of {totalCount} subcontractors
       </div>
     </div>
   );
