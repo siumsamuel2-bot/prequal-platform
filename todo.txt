@@ -1,0 +1,4 @@
+Added new feature to prequal-platform
+Added new feature to prequal-platform
+perf(db): add performance migration, pool tuning, and optimization doc (MID-49)
+Sprint 2 schema work: add multi-tenancy, alert infrastructure, and contractor linkage
