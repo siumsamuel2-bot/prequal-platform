@@ -69,8 +69,7 @@ def upgrade() -> None:
     op.create_index('idx_projects_client_name', 'projects', ['client_name'])
     # projects: add city + state for geo-filtered listings
     op.create_index('idx_projects_city_state', 'projects', ['city', 'state'])
-    # projects: add team_id for team-scoped project lookups
-    op.create_index('idx_projects_team_id', 'projects', ['team_id'])
+    # idx_projects_team_id already created in 005_auth_users_teams.py
 
     # certifications: add certification_type for type filtering
     op.create_index('idx_certifications_type', 'certifications', ['certification_type'])
@@ -132,9 +131,7 @@ def upgrade() -> None:
 
     # sync_run_logs: add job_type for type filtering
     op.create_index('idx_sync_run_logs_job_type', 'sync_run_logs', ['job_type'])
-    # sync_run_logs: add started_at for date-range filtering
-    op.create_index('idx_sync_run_logs_started_at', 'sync_run_logs', ['started_at'])
-    # sync_run_logs: add completed_at for date-range filtering
+    # sync_run_logs: add completed_at for date-range filtering (idx_sync_run_logs_started_at already in 004)
     op.create_index('idx_sync_run_logs_completed_at', 'sync_run_logs', ['completed_at'])
 
     # state_credential_records: add credential_number for lookup
@@ -153,8 +150,7 @@ def upgrade() -> None:
 
     # data_quality_results: add created_at for sorted listings
     op.create_index('idx_data_quality_results_created_at', 'data_quality_results', ['created_at'])
-    # data_quality_results: add executed_at for date-range filtering
-    op.create_index('idx_data_quality_results_executed_at', 'data_quality_results', ['executed_at'])
+    # idx_data_quality_results_executed_at already created in 004_data_pipeline_sync.py
 
     # =====================================================================
     # 3. alerts.py models
@@ -272,7 +268,7 @@ def downgrade() -> None:
     op.drop_index('idx_alert_configs_created_at', table_name='alert_configs')
 
     # 2. compliance
-    op.drop_index('idx_data_quality_results_executed_at', table_name='data_quality_results')
+    # idx_data_quality_results_executed_at is in 004_data_pipeline_sync.py, do not drop here
     op.drop_index('idx_data_quality_results_created_at', table_name='data_quality_results')
     op.drop_index('idx_data_quality_checks_created_at', table_name='data_quality_checks')
     op.drop_index('idx_state_credential_state_num', table_name='state_credential_records')
@@ -281,7 +277,7 @@ def downgrade() -> None:
     op.drop_index('idx_state_credential_type', table_name='state_credential_records')
     op.drop_index('idx_state_credential_number', table_name='state_credential_records')
     op.drop_index('idx_sync_run_logs_completed_at', table_name='sync_run_logs')
-    op.drop_index('idx_sync_run_logs_started_at', table_name='sync_run_logs')
+    # idx_sync_run_logs_started_at belongs to 004, do not drop here
     op.drop_index('idx_sync_run_logs_job_type', table_name='sync_run_logs')
     op.drop_index('idx_osha_api_logs_request_date', table_name='osha_api_logs')
     op.drop_index('idx_osha_inspections_site_state', table_name='osha_inspections')
@@ -308,7 +304,7 @@ def downgrade() -> None:
     op.drop_index('idx_certifications_subcontractor_status', table_name='certifications')
     op.drop_index('idx_certifications_created_at', table_name='certifications')
     op.drop_index('idx_certifications_type', table_name='certifications')
-    op.drop_index('idx_projects_team_id', table_name='projects')
+    # idx_projects_team_id belongs to 005, do not drop here
     op.drop_index('idx_projects_city_state', table_name='projects')
     op.drop_index('idx_projects_client_name', table_name='projects')
     op.drop_index('idx_projects_estimated_end_date', table_name='projects')
