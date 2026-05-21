@@ -1,0 +1,59 @@
+# Render Blueprint for Prequal Platform
+# Deploy with: renderctl apply -f render.yaml
+
+services:
+  # FastAPI Backend
+  - type: web
+    name: prequal-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn api.main:app --host 0.0.0.0 --port 8000
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATABASE_URL
+        fromDatabase:
+          name: prequal-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: prequal-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: https://prequal.yourcompany.com
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "60"
+    healthCheckPath: /health
+    healthCheckTimeout: 10
+    autoDeploy: true
+    domains:
+      - prequal.yourcompany.com
+
+  # React Frontend (static site)
+  - type: web
+    name: prequal-frontend
+    env: static
+    buildCommand: npm ci && npm run build
+    distDir: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://prequal-backend.onrender.com
+      - key: VITE_APP_NAME
+        value: Prequal Platform
+    autoDeploy: true
+
+databases:
+  - name: prequal-db
+    databaseName: prequal_prod
+    ipAllowList: []
+
+redis:
+  - name: prequal-redis
+    ipAllowList: []

@@ -19,7 +19,9 @@ if config.config_file_name is not None:
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.database import Base
-import app.models.compliance  # noqa: F401 — registers all models on Base.metadata
+import app.models.compliance  # noqa: F401
+import app.models.auth  # noqa: F401 — registers auth models
+import app.models.alerts  # noqa: F401 — registers alert models
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,

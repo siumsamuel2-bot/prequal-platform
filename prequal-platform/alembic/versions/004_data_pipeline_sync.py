@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import UUID
 
-revision = "004"
+revision = "004_data_pipeline_sync"
 down_revision = "003"
 branch_labels = None
 depends_on = None

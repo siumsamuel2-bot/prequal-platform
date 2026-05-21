@@ -1,0 +1,57 @@
+# Fly.io configuration for Prequal Platform
+# Deploy with: fly deploy --app prequal-platform
+
+app = "prequal-platform"
+primary_region = "us-east-1"
+
+[build]
+  dockerfile = "Dockerfile.backend.prod"
+
+[env]
+  PORT = "8000"
+  ENVIRONMENT = "production"
+  LOG_LEVEL = "INFO"
+  DEBUG = "false"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 250
+    soft_limit = 200
+
+  [[http_service.ports]]
+    port = 80
+    handlers = ["health_check"]
+    force_https = true
+
+  [[http_service.ports]]
+    port = 443
+    protocols = ["tcp", "tls"]
+
+  [[http_service.tls_options]]
+    cert_files = []
+    default_self_signed = true
+
+[checks]
+  [checks.health]
+    port = 8000
+    path = "/health"
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "60s"
+    method = "get"
+    protocol = "http"
+
+[deploy]
+  release_command = "alembic upgrade head"
+
+[metrics]
+  port = 8000
+  path = "/metrics"

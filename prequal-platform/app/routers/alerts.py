@@ -26,9 +26,10 @@ from app.models.compliance import (
 from app.schemas.compliance import (
     AlertNotificationResponse, AlertNotificationStatus,
     AlertNotificationUpdate, AlertNotificationCreate, AlertWithContextResponse,
-    AlertPreferenceCreate, AlertPreferenceResponse
+    AlertPreferenceCreate, AlertPreferenceResponse,
+    NotificationPreferencesUpdate, NotificationPreferencesResponse
 )
-from app.services.alert_service import scan_expirations, get_alert_summary
+from app.services.alert_service import scan_expirations, get_alert_summary, deliver_pending_alerts
 from app.routers.auth import get_current_user, TokenData
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -254,6 +255,19 @@ async def trigger_scan(
     }
 
 
+@router.post("/deliver", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_delivery(
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """Trigger delivery of all pending alerts (for testing / admin use)."""
+    summary = await deliver_pending_alerts(db)
+    return {
+        "message": "Alert delivery completed",
+        "summary": summary
+    }
+
+
 @router.get("/summary")
 async def get_alerts_summary(
     days: int = Query(30, ge=1, le=365),
@@ -354,3 +368,52 @@ async def get_notification_preferences(
         "digest_enabled": prefs.digest_enabled,
         "digest_frequency": prefs.digest_frequency
     }
+
+
+@router.put("/notification-preferences", response_model=NotificationPreferencesResponse)
+async def update_notification_preferences(
+    prefs_update: NotificationPreferencesUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """Create or update notification preferences for the current user."""
+    result = await db.execute(
+        select(NotificationPreferences).where(
+            NotificationPreferences.user_id == UUID(current_user.user_id)
+        )
+    )
+    db_prefs = result.scalar_one_or_none()
+    
+    if db_prefs:
+        update_data = prefs_update.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(db_prefs, field, value)
+    else:
+        db_prefs = NotificationPreferences(
+            user_id=UUID(current_user.user_id),
+            notify_on_cert_expiration=prefs_update.notify_on_cert_expiration if prefs_update.notify_on_cert_expiration is not None else True,
+            notify_on_cert_expiration_days=prefs_update.notify_on_cert_expiration_days if prefs_update.notify_on_cert_expiration_days is not None else [30, 14, 7],
+            notify_on_violation=prefs_update.notify_on_violation if prefs_update.notify_on_violation is not None else True,
+            notify_on_renewal_request=prefs_update.notify_on_renewal_request if prefs_update.notify_on_renewal_request is not None else True,
+            notify_on_renewal_approved=prefs_update.notify_on_renewal_approved if prefs_update.notify_on_renewal_approved is not None else False,
+            email_enabled=prefs_update.email_enabled if prefs_update.email_enabled is not None else True,
+            sms_enabled=prefs_update.sms_enabled if prefs_update.sms_enabled is not None else False,
+            in_app_enabled=prefs_update.in_app_enabled if prefs_update.in_app_enabled is not None else True,
+            custom_email=prefs_update.custom_email,
+            custom_phone=prefs_update.custom_phone,
+            digest_enabled=prefs_update.digest_enabled if prefs_update.digest_enabled is not None else False,
+            digest_frequency=prefs_update.digest_frequency if prefs_update.digest_frequency is not None else "daily",
+            digest_day_of_week=prefs_update.digest_day_of_week,
+            digest_hour=prefs_update.digest_hour if prefs_update.digest_hour is not None else 9,
+            quiet_hours_start=prefs_update.quiet_hours_start,
+            quiet_hours_end=prefs_update.quiet_hours_end,
+            quiet_hours_timezone=prefs_update.quiet_hours_timezone if prefs_update.quiet_hours_timezone is not None else "UTC",
+            language=prefs_update.language if prefs_update.language is not None else "en",
+            max_emails_per_hour=prefs_update.max_emails_per_hour if prefs_update.max_emails_per_hour is not None else 10,
+            max_emails_per_day=prefs_update.max_emails_per_day if prefs_update.max_emails_per_day is not None else 50,
+        )
+        db.add(db_prefs)
+    
+    await db.commit()
+    await db.refresh(db_prefs)
+    return db_prefs

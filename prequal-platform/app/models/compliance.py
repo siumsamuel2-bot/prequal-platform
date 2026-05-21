@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, date
-from typing import Optional, List
+from typing import Optional
+from typing import List
 from sqlalchemy import (
     String, Text, Date, DateTime, Boolean, Numeric, Integer, 
     ForeignKey, UniqueConstraint, Index, ARRAY
@@ -71,6 +72,7 @@ class Project(Base):
     status: Mapped[str] = mapped_column(String(50), default="planning")
     budget: Mapped[Optional[float]] = mapped_column(Numeric(15, 2))
     org_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
+    team_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -80,6 +82,7 @@ class Project(Base):
     __table_args__ = (
         Index("idx_projects_status", "status"),
         Index("idx_projects_org_id", "org_id"),
+        Index("idx_projects_team_id", "team_id"),
     )
 
 
