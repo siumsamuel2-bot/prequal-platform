@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { subcontractorApi, Subcontractor } from '../api/client';
+import { Loading, SkeletonTable, EmptyState } from './Loading';
 
 const PAGE_SIZE = 20;
 
@@ -57,7 +58,7 @@ const SubcontractorList = () => {
     navigate('/subcontractors/new');
   };
 
-  if (loading) return <div className="subcontractor-list">Loading subcontractors...</div>;
+  if (loading) return <div className="subcontractor-list"><Loading message="Loading subcontractors..." /><SkeletonTable rows={5} columns={4} /></div>;
   if (error) return <div className="subcontractor-list error">{error}</div>;
 
   return (
@@ -109,7 +110,17 @@ const SubcontractorList = () => {
           <tbody>
             {paginatedSubcontractors.length === 0 ? (
               <tr>
-                <td colSpan={6}>No subcontractors found.</td>
+                <td colSpan={6}>
+                  <EmptyState
+                    title={searchTerm || statusFilter !== 'all' ? 'No subcontractors match your filters' : 'No subcontractors yet'}
+                    description={searchTerm || statusFilter !== 'all' ? 'Try adjusting your search or filters.' : 'Add your first subcontractor to get started.'}
+                    icon={
+                      <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                    }
+                  />
+                </td>
               </tr>
             ) : (
               paginatedSubcontractors.map(sub => (

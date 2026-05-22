@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { credentialsApi } from '../api/client';
+import { useToast } from './ToastContext';
 
 interface DocumentUploadProps {
   subcontractorId: string;
@@ -7,10 +8,10 @@ interface DocumentUploadProps {
 }
 
 const DocumentUpload = ({ subcontractorId, onUploadComplete }: DocumentUploadProps) => {
+  const { success: showSuccess, error: showError } = useToast();
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [certificationType, setCertificationType] = useState('OSHA 30');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -45,7 +46,6 @@ const DocumentUpload = ({ subcontractorId, onUploadComplete }: DocumentUploadPro
 
   const handleUpload = async (file: File) => {
     setError(null);
-    setSuccess(null);
     
     const validTypes = [
       'application/pdf',
@@ -70,14 +70,16 @@ const DocumentUpload = ({ subcontractorId, onUploadComplete }: DocumentUploadPro
 
     try {
       await credentialsApi.upload(subcontractorId, file, certificationType);
-      setSuccess('Document uploaded successfully! It will be processed shortly.');
+      showSuccess('Document uploaded successfully! It will be processed shortly.');
       onUploadComplete?.();
       
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
+      const errorMsg = err instanceof Error ? err.message : 'Upload failed';
+      setError(errorMsg);
+      showError(errorMsg);
     } finally {
       setUploading(false);
     }
@@ -143,7 +145,6 @@ const DocumentUpload = ({ subcontractorId, onUploadComplete }: DocumentUploadPro
         </div>
 
         {error && <div className="upload-error">{error}</div>}
-        {success && <div className="upload-success">{success}</div>}
       </div>
     </div>
   );

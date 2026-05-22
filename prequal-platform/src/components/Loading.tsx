@@ -165,3 +165,40 @@ export const SkeletonTable: React.FC<SkeletonTableProps> = ({ rows = 5, columns 
     </div>
   );
 };
+
+interface EmptyStateProps {
+  title: string;
+  description?: string;
+  icon?: React.ReactNode;
+  action?: React.ReactNode;
+}
+
+export const EmptyState: React.FC<EmptyStateProps> = ({ title, description, icon, action }) => {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '48px 24px',
+        textAlign: 'center',
+      }}
+    >
+      {icon && (
+        <div style={{ marginBottom: '16px', color: '#9ca3af' }}>
+          {icon}
+        </div>
+      )}
+      <h3 style={{ fontSize: '18px', fontWeight: 600, color: '#374151', marginBottom: '8px' }}>
+        {title}
+      </h3>
+      {description && (
+        <p style={{ fontSize: '14px', color: '#6b7280', maxWidth: '400px', marginBottom: '16px' }}>
+          {description}
+        </p>
+      )}
+      {action && <div>{action}</div>}
+    </div>
+  );
+};

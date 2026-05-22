@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { subcontractorApi, certificationApi, violationApi, Subcontractor, Certification, Violation } from '../api/client';
 import DocumentUpload from './DocumentUpload';
+import { Loading } from './Loading';
 
 const SubcontractorProfile = () => {
   const { id } = useParams();
@@ -104,7 +105,7 @@ const SubcontractorProfile = () => {
   if (loading) {
     return (
       <div className="subcontractor-profile">
-        <div className="profile-loading">Loading profile...</div>
+        <Loading message="Loading profile..." fullScreen={false} />
       </div>
     );
   }

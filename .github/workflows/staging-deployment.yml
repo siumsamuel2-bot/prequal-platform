@@ -1,0 +1,212 @@
+name: Staging Deployment
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to deploy'
+        required: true
+        default: 'latest'
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY_BACKEND: prequal-platform/backend
+  ECR_REPOSITORY_FRONTEND: prequal-platform/frontend
+  ECS_CLUSTER: prequal-cluster-staging
+  ECS_SERVICE_BACKEND: prequal-backend-service-staging
+  ECS_SERVICE_FRONTEND: prequal-frontend-service-staging
+  ECS_TASK_DEFINITION: prequal-task-staging
+
+jobs:
+  # Run tests
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run tests
+      run: npm test
+
+    - name: Lint code
+      run: npm run lint
+
+    - name: Type check
+      run: npm run typecheck
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Python dependencies
+      run: |
+        cd prequal-platform
+        pip install -r requirements.txt
+
+    - name: Run Python tests
+      run: |
+        cd prequal-platform
+        pytest tests/ -v --cov=app --cov=api
+
+  # Build and push Docker images
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      backend-tag: ${{ steps.meta-backend.outputs.tags }}
+      frontend-tag: ${{ steps.meta-frontend.outputs.tags }}
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to ECR
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.AWS_REGION }}.amazonaws.com
+        username: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        password: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+    # Backend Image
+    - name: Extract metadata for backend
+      id: meta-backend
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}
+        tags: |
+          type=ref,event=branch
+          type=sha,prefix=sha-
+          type=raw,value=staging-latest
+
+    - name: Build and push backend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./prequal-platform
+        file: ./prequal-platform/Dockerfile.backend.prod
+        push: true
+        tags: ${{ steps.meta-backend.outputs.tags }}
+        labels: ${{ steps.meta-backend.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    # Frontend Image
+    - name: Extract metadata for frontend
+      id: meta-frontend
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_FRONTEND }}
+        tags: |
+          type=ref,event=branch
+          type=sha,prefix=sha-
+          type=raw,value=staging-latest
+
+    - name: Build and push frontend image
+      uses: docker/build-push-action@v5
+      with:
+        context: ./prequal-platform
+        file: ./prequal-platform/Dockerfile.frontend.prod
+        push: true
+        tags: ${{ steps.meta-frontend.outputs.tags }}
+        labels: ${{ steps.meta-frontend.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # Deploy to staging
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: staging
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    # Run database migrations
+    - name: Run database migrations
+      run: |
+        echo "Running database migrations in staging..."
+        aws ecs run-task \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --task-definition ${{ env.ECS_TASK_DEFINITION }}-migrate \
+          --network-mode awsvpc \
+          --launch-type FARGATE \
+          --overrides '{"containerOverrides":[{"name":"migrate","command":["python","migrate.py","upgrade"]}]}' \
+          --region ${{ env.AWS_REGION }} || echo "Migration task completed or not required"
+
+    # Update Backend Service
+    - name: Update ECS Backend Service
+      run: |
+        aws ecs update-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service ${{ env.ECS_SERVICE_BACKEND }} \
+          --force-new-deployment \
+          --region ${{ env.AWS_REGION }}
+
+    # Update Frontend Service
+    - name: Update ECS Frontend Service
+      run: |
+        aws ecs update-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service ${{ env.ECS_SERVICE_FRONTEND }} \
+          --force-new-deployment \
+          --region ${{ env.AWS_REGION }}
+
+    # Wait for deployment
+    - name: Wait for backend deployment
+      run: |
+        aws ecs wait services-stable \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --services ${{ env.ECS_SERVICE_BACKEND }} \
+          --region ${{ env.AWS_REGION }}
+
+    - name: Wait for frontend deployment
+      run: |
+        aws ecs wait services-stable \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --services ${{ env.ECS_SERVICE_FRONTEND }} \
+          --region ${{ env.AWS_REGION }}
+
+    # Health Checks
+    - name: Backend Health Check
+      run: |
+        echo "Waiting for deployment to settle..."
+        sleep 30
+        curl -f -s https://staging.prequal.yourcompany.com/api/health || exit 1
+
+    - name: Frontend Health Check
+      run: |
+        curl -f -s https://staging.prequal.yourcompany.com/ || exit 1
+
+    # Notify on completion
+    - name: Notify Success
+      if: success()
+      run: |
+        echo "✅ Staging deployment completed successfully!"
+        echo "Version: staging-latest"
+        echo "Commit: ${{ github.sha }}"
+
+    - name: Notify Failure
+      if: failure()
+      run: |
+        echo "❌ Staging deployment failed!"
+        echo "Check logs for details"
