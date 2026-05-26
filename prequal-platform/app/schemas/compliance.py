@@ -444,6 +444,98 @@ class DashboardSummary(BaseModel):
     recent_alerts: List[AlertNotificationResponse] = []
 
 
+# ---------------------------------------------------------------------------
+# Analytics Dashboard Schemas
+# Added: 2026-05-26 (Data Engineer)
+# Purpose: response shapes for analytics materialized view endpoints
+# ---------------------------------------------------------------------------
+
+class ComplianceSummaryResponse(BaseModel):
+    total_subcontractors: int
+    active_subcontractors: int
+    suspended_subcontractors: int
+    blacklisted_subcontractors: int
+    compliant_subcontractors: int
+    compliance_rate: float
+    expiring_soon_30d: int
+    expiring_soon_60d: int
+    open_violations: int
+    open_osha_violations: int
+    total_open_penalties: float
+    valid_certifications: int
+    expired_certifications: int
+    pending_verification_certs: int
+    computed_at: Optional[str] = None
+
+
+class ComplianceTrendPoint(BaseModel):
+    date: Optional[str] = None
+    active_subcontractors: int
+    valid_certifications: int
+    expired_certifications: int
+    open_violations: int
+    open_osha_violations: int
+    compliance_percentage: float
+    computed_at: Optional[str] = None
+
+
+class CertificationExportRow(BaseModel):
+    subcontractor_id: str
+    company_name: str
+    email: str
+    subcontractor_status: str
+    certification_id: str
+    certification_type: str
+    certification_number: Optional[str] = None
+    issue_date: Optional[str] = None
+    expiration_date: Optional[str] = None
+    certification_status: str
+    verification_status: str
+    expiration_bucket: Optional[str] = None
+    days_until_expiration: Optional[int] = None
+    verified_at: Optional[str] = None
+    created_at: Optional[str] = None
+    computed_at: Optional[str] = None
+
+
+class ProjectComplianceSummary(BaseModel):
+    project_id: str
+    project_name: str
+    project_number: Optional[str] = None
+    project_status: str
+    total_subcontractors: int
+    active_subcontractors: int
+    suspended_subcontractors: int
+    compliant_subcontractors: int
+    compliance_rate: float
+    open_violations: int
+    open_osha_violations: int
+    total_open_penalties: float
+    expiring_soon_subcontractors: int
+    computed_at: Optional[str] = None
+
+
+class RecentAlert(BaseModel):
+    alert_id: str
+    certification_id: str
+    alert_type: str
+    scheduled_for: Optional[str] = None
+    sent_at: Optional[str] = None
+    status: str
+    method: Optional[str] = None
+    recipient: Optional[str] = None
+    subject: Optional[str] = None
+    acknowledged_at: Optional[str] = None
+    days_until_expiration: Optional[int] = None
+    created_at: Optional[str] = None
+    certification_type: str
+    expiration_date: Optional[str] = None
+    subcontractor_id: str
+    subcontractor_name: str
+    subcontractor_email: str
+    computed_at: Optional[str] = None
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"

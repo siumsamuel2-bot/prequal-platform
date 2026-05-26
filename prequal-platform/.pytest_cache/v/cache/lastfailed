@@ -9,5 +9,12 @@
   "tests/test_alerts_integration.py::TestAlertServiceIntegration::test_scan_deduplicates_same_day": true,
   "tests/test_alerts_integration.py::TestAlertEndpointsIntegration::test_scan_endpoint_triggers_and_returns_summary": true,
   "tests/test_data_pipeline.py::TestDataQualityChecks::test_run_data_quality_no_rules": true,
-  "tests/test_data_pipeline.py::TestAnalyticsViews::test_refresh_views_does_not_crash": true
+  "tests/test_data_pipeline.py::TestAnalyticsViews::test_refresh_views_does_not_crash": true,
+  "tests/test_analytics_pipeline.py::TestComplianceSummary::test_returns_dict": true,
+  "tests/test_analytics_pipeline.py::TestComplianceSummary::test_required_fields_present": true,
+  "tests/test_analytics_pipeline.py::TestComplianceSummary::test_counts_are_non_negative": true,
+  "tests/test_analytics_pipeline.py::TestComplianceSummary::test_compliance_rate_between_0_and_100": true,
+  "tests/test_analytics_pipeline.py::TestDataQuality::test_compliant_count_le_total_active": true,
+  "tests/test_analytics_pipeline.py::TestDataQuality::test_no_negative_penalties": true,
+  "tests/test_analytics_pipeline.py::TestDataQuality::test_computed_at_field_is_iso": true
 }

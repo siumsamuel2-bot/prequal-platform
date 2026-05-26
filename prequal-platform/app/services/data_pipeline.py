@@ -557,12 +557,10 @@ async def run_full_pipeline(
     except Exception:
         logger.exception("Data quality step failed")
 
-    # 3. Analytics refresh
+    # 3. Analytics refresh - uses the new analytics_pipeline module
     try:
-        db = AsyncSessionLocal()
-        await refresh_analytics_views(db)
-        overall["analytics"] = "refreshed"
-        await db.close()
+        from app.services.analytics_refresh import run_analytics_refresh
+        overall["analytics"] = await run_analytics_refresh(triggered_by=triggered_by)
     except Exception:
         logger.exception("Analytics refresh step failed")
 

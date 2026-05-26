@@ -10,7 +10,7 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.database import init_db, close_db
-from app.routers import auth, compliance, alerts, credentials
+from app.routers import auth, compliance, alerts, credentials, analytics
 from app.logging_config import setup_logging, get_logger
 
 
@@ -82,6 +82,7 @@ app.include_router(auth.router)
 app.include_router(compliance.router)
 app.include_router(alerts.router)
 app.include_router(credentials.router)
+app.include_router(analytics.router)
 
 # Import and include health router (must be after app creation)
 from api import health

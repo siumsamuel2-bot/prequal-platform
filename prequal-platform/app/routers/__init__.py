@@ -1,3 +1,3 @@
-from app.routers import auth, compliance
+from app.routers import auth, compliance, alerts, credentials, analytics
 
-__all__ = ["auth", "compliance"]
+__all__ = ["auth", "compliance", "alerts", "credentials", "analytics"]
