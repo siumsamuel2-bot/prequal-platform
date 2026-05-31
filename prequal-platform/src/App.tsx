@@ -9,6 +9,7 @@ import SubcontractorList from './components/SubcontractorList';
 import SubcontractorProfile from './components/SubcontractorProfile';
 import Certifications from './components/Certifications';
 import Violations from './components/Violations';
+import NotFound from './components/NotFound';
 import { isAuthenticated } from './utils/auth';
 import { ToastProvider } from './components/ToastContext';
 import { ToastContainer } from './components/ToastContainer';
@@ -37,6 +38,7 @@ const AppContent = () => {
                 <Route path="/subcontractors/:id" element={<SubcontractorProfile />} />
                 <Route path="/certifications" element={<Certifications />} />
                 <Route path="/violations" element={<Violations />} />
+                <Route path="*" element={<NotFound />} />
               </Routes>
             </Layout>
           </PrivateRoute>

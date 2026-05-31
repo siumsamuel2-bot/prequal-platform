@@ -1,4 +1,8 @@
+import io
+import logging
 from datetime import date, timedelta
+
+logger = logging.getLogger(__name__)
 from typing import List, Optional
 from uuid import UUID
 
@@ -709,7 +713,8 @@ async def get_compliance_alerts(
             "message": f"Certification {cert.certification_type} for {company_name} expires in {days_until} days",
             "certification_id": str(cert.id),
             "subcontractor_id": str(cert.subcontractor_id),
-            "expiration_date": cert.expiration_date.isoformat()
+            "expiration_date": cert.expiration_date.isoformat(),
+            "days_until_expiration": days_until
         })
     
     return alerts
@@ -772,4 +777,31 @@ async def get_dashboard_summary(
         expiring_this_month=expiring_this_month,
         open_violations=open_violations,
         recent_alerts=[AlertNotificationResponse.model_validate(a) for a in recent_alerts]
+    )
+
+
+@router.get("/subcontractors/{subcontractor_id}/report")
+async def get_subcontractor_pdf_report(
+    subcontractor_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """Generate and download a PDF compliance report for a subcontractor."""
+    from fastapi.responses import StreamingResponse
+    from app.services.pdf_service import generate_subcontractor_pdf
+
+    try:
+        pdf_bytes = await generate_subcontractor_pdf(db, subcontractor_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except Exception as e:
+        logger.error(f"PDF generation failed: {e}")
+        raise HTTPException(status_code=500, detail="PDF generation failed") from e
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=compliance-report-{subcontractor_id}.pdf"
+        }
     )

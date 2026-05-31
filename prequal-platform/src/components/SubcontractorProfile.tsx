@@ -3,17 +3,17 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { subcontractorApi, certificationApi, violationApi, Subcontractor, Certification, Violation } from '../api/client';
 import DocumentUpload from './DocumentUpload';
 import { Loading } from './Loading';
+import { useToast } from './ToastContext';
 
 const SubcontractorProfile = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const toast = useToast();
   const [subcontractor, setSubcontractor] = useState<Subcontractor | null>(null);
   const [certifications, setCertifications] = useState<Certification[]>([]);
   const [violations, setViolations] = useState<Violation[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [saveSuccess, setSaveSuccess] = useState(false);
   const [activeTab, setActiveTab] = useState<'details' | 'certifications' | 'violations'>('details');
 
   const isNew = id === 'new';
@@ -46,13 +46,13 @@ const SubcontractorProfile = () => {
         setCertifications(certsData);
         setViolations(violationsData);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load subcontractor');
+        toast.error(err instanceof Error ? err.message : 'Failed to load subcontractor');
       } finally {
         setLoading(false);
       }
     };
     fetchData();
-  }, [id, isNew]);
+  }, [id, isNew, toast]);
 
   const handleChange = (field: keyof Subcontractor, value: string) => {
     if (subcontractor) {
@@ -64,20 +64,18 @@ const SubcontractorProfile = () => {
     if (!subcontractor) return;
 
     setSaving(true);
-    setSaveSuccess(false);
 
     try {
       if (isNew) {
         const created = await subcontractorApi.create(subcontractor);
-        setSaveSuccess(true);
+        toast.success('Subcontractor created successfully');
         setTimeout(() => navigate(`/subcontractors/${created.id}`), 1500);
       } else {
         await subcontractorApi.update(subcontractor.id, subcontractor);
-        setSaveSuccess(true);
-        setTimeout(() => setSaveSuccess(false), 3000);
+        toast.success('Profile saved successfully');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save');
+      toast.error(err instanceof Error ? err.message : 'Failed to save');
     } finally {
       setSaving(false);
     }
@@ -110,15 +108,6 @@ const SubcontractorProfile = () => {
     );
   }
 
-  if (error && !subcontractor) {
-    return (
-      <div className="subcontractor-profile">
-        <div className="profile-error">{error}</div>
-        <button onClick={() => navigate('/subcontractors')}>Back to List</button>
-      </div>
-    );
-  }
-
   if (!subcontractor) return null;
 
   return (
@@ -130,6 +119,29 @@ const SubcontractorProfile = () => {
           <span className={`status-badge ${subcontractor.status}`}>
             {subcontractor.status}
           </span>
+        )}
+        {!isNew && (
+          <button
+            className="btn-download"
+            onClick={async () => {
+              try {
+                const blob = await subcontractorApi.downloadReport(subcontractor.id);
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `compliance-report-${subcontractor.company_name.replace(/\s+/g, '-').toLowerCase()}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+                toast.success('Report downloaded successfully');
+              } catch (err) {
+                toast.error(err instanceof Error ? err.message : 'Failed to download report');
+              }
+            }}
+          >
+            Download PDF
+          </button>
         )}
       </div>
 
@@ -312,11 +324,6 @@ const SubcontractorProfile = () => {
               </div>
             </div>
           )}
-
-          {error && <div className="form-error">{error}</div>}
-          {saveSuccess && <div className="form-success">
-            {isNew ? 'Subcontractor created successfully!' : 'Profile saved successfully!'}
-          </div>}
 
           <div className="form-actions">
             <button type="submit" className="btn-primary" disabled={saving}>

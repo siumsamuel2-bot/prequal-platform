@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
+import Breadcrumb from './Breadcrumb';
 import './Layout.css';
 
 interface LayoutProps {
@@ -13,7 +14,10 @@ const Layout = ({ children }: LayoutProps) => {
       <Sidebar />
       <div className="layout-main">
         <Header />
-        <main className="layout-content">{children}</main>
+        <div className="layout-content">
+          <Breadcrumb />
+          {children}
+        </div>
       </div>
     </div>
   );

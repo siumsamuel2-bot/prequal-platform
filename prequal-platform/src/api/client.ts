@@ -126,6 +126,16 @@ export const subcontractorApi = {
     apiClient.put<Subcontractor>(`/subcontractors/${id}`, data),
 
   delete: (id: string) => apiClient.delete<{ message: string }>(`/subcontractors/${id}`),
+
+  downloadReport: async (id: string) => {
+    const response = await fetch(`${API_BASE_URL}/subcontractors/${id}/report`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('access_token')}`
+      }
+    });
+    if (!response.ok) throw new Error('Failed to download report');
+    return response.blob();
+  }
 };
 
 export const complianceApi = {

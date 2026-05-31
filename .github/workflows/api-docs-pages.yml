@@ -1,0 +1,145 @@
+name: Publish API Documentation
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  # Generate OpenAPI spec
+  generate-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          cd prequal-platform
+          pip install -r requirements.txt
+      
+      - name: Generate OpenAPI spec
+        run: |
+          cd prequal-platform
+          python -c "
+          import json
+          from api.main import app
+          openapi = app.openapi()
+          with open('openapi.json', 'w') as f:
+              json.dump(openapi, f, indent=2)
+          "
+      
+      - name: Upload OpenAPI spec
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-spec
+          path: prequal-platform/openapi.json
+          retention-days: 1
+
+  # Build and deploy to GitHub Pages
+  deploy-pages:
+    runs-on: ubuntu-latest
+    needs: generate-spec
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Download OpenAPI spec
+        uses: actions/download-artifact@v4
+        with:
+          name: openapi-spec
+          path: ./docs
+      
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+      
+      - name: Create API docs HTML
+        run: |
+          cat > docs/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Prequal API Documentation</title>
+              <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+              <style>
+                  body { margin: 0; padding: 0; }
+                  #swagger-ui { max-width: 1460px; margin: 0 auto; }
+                  header {
+                      background: #1a1a2e;
+                      color: white;
+                      padding: 1rem 2rem;
+                      text-align: center;
+                  }
+                  header h1 { margin: 0; }
+                  header p { margin: 0.5rem 0 0; opacity: 0.8; }
+              </style>
+          </head>
+          <body>
+              <header>
+                  <h1>Prequal API Documentation</h1>
+                  <p>Subcontractor Compliance Platform</p>
+              </header>
+              <div id="swagger-ui"></div>
+              <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+              <script>
+                  window.onload = function() {
+                      SwaggerUIBundle({
+                          url: "openapi.json",
+                          dom_id: '#swagger-ui',
+                          presets: [
+                              SwaggerUIBundle.presets.apis,
+                              SwaggerUIBundle.SwaggerUIStandalonePreset
+                          ],
+                          layout: "BaseLayout",
+                          deepLinking: true,
+                          showExtensions: true,
+                          showCommonExtensions: true
+                      });
+                  };
+              </script>
+          </body>
+          </html>
+          EOF
+      
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './docs'
+      
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # Notify on completion
+  notify:
+    runs-on: ubuntu-latest
+    needs: deploy-pages
+    if: always()
+    steps:
+      - name: Get deployment status
+        run: |
+          echo "API Docs Deployment Status: ${{ needs.deploy-pages.result }}"
+          if [ "${{ needs.deploy-pages.result }}" == "success" ]; then
+            echo "✅ API Documentation published successfully!"
+            echo "URL: ${{ steps.deployment.outputs.page_url }}"
+          else
+            echo "❌ API Documentation deployment failed!"
+          fi

@@ -5,9 +5,11 @@ Provides async database session and test client fixtures.
 
 import os
 
-# Use a file-based SQLite so that multiple AsyncSession connections share
-# the same database. In-memory SQLite creates a fresh DB per connection.
-_test_db_path = os.path.join(os.path.dirname(__file__), "..", "test_prequal.db")
+import uuid
+
+# Use a file-based SQLite with a unique path per test session so that
+# parallel or overlapping runs do not collide on the same file.
+_test_db_path = os.path.join(os.path.dirname(__file__), "..", f"test_prequal_{uuid.uuid4().hex}.db")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_test_db_path}"
 
 import pytest_asyncio  # noqa: E402

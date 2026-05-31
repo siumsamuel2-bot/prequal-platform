@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { violationApi, Violation } from '../api/client';
+import { Loading, EmptyState } from './Loading';
+import { useToast } from './ToastContext';
 
 const Violations = () => {
+  const toast = useToast();
   const [violations, setViolations] = useState<Violation[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [typeFilter, setTypeFilter] = useState<string>('all');
@@ -15,13 +17,13 @@ const Violations = () => {
         const data = await violationApi.getAll();
         setViolations(data);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load violations');
+        toast.error(err instanceof Error ? err.message : 'Failed to load violations');
       } finally {
         setLoading(false);
       }
     };
     fetchViolations();
-  }, []);
+  }, [toast]);
 
   const uniqueViolationTypes = [...new Set(violations.map(v => v.violation_type))];
 
@@ -37,8 +39,7 @@ const Violations = () => {
     return matchesSearch && matchesStatus && matchesType;
   });
 
-  if (loading) return <div className="violations-page">Loading violations...</div>;
-  if (error) return <div className="violations-page error">{error}</div>;
+  if (loading) return <div className="violations-page"><Loading message="Loading violations..." /></div>;
 
   return (
     <div className="violations-page">
@@ -105,7 +106,17 @@ const Violations = () => {
           <tbody>
             {filteredViolations.length === 0 ? (
               <tr>
-                <td colSpan={5}>No violations found.</td>
+                <td colSpan={5}>
+                  <EmptyState
+                    title={searchTerm || statusFilter !== 'all' || typeFilter !== 'all' ? 'No violations match your filters' : 'No violations recorded'}
+                    description={searchTerm || statusFilter !== 'all' || typeFilter !== 'all' ? 'Try adjusting your search or filters.' : 'Violations will appear here when recorded.'}
+                    icon={
+                      <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                    }
+                  />
+                </td>
               </tr>
             ) : (
               filteredViolations.map(v => (
