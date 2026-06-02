@@ -1,3 +1,4 @@
+import csv
 import io
 import logging
 from datetime import date, timedelta
@@ -27,9 +28,15 @@ from app.schemas.compliance import (
     AlertPreferenceCreate, AlertPreferenceUpdate, AlertPreferenceResponse,
     AlertNotificationUpdate, AlertNotificationResponse,
     CertificationRenewalCreate, CertificationRenewalUpdate, CertificationRenewalResponse,
-    SubcontractorStatus, CertificationStatus, ViolationStatus
+    SubcontractorStatus, CertificationStatus, ViolationStatus,
+    ComplianceSummaryResponse, ComplianceTrendPoint, CertificationExportRow
 )
 from app.routers.auth import get_current_user, TokenData
+from app.services.analytics_pipeline import (
+    get_compliance_summary,
+    get_compliance_trends,
+    get_certification_export_rows,
+)
 
 router = APIRouter(prefix="/api", tags=["compliance"])
 
@@ -804,4 +811,71 @@ async def get_subcontractor_pdf_report(
         headers={
             "Content-Disposition": f"attachment; filename=compliance-report-{subcontractor_id}.pdf"
         }
+    )
+
+
+@router.get("/compliance/summary", response_model=ComplianceSummaryResponse)
+async def compliance_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """Return a single-row compliance summary for the dashboard card view."""
+    data = await get_compliance_summary(db)
+    return ComplianceSummaryResponse(**data)
+
+
+@router.get("/compliance/trends", response_model=list[ComplianceTrendPoint])
+async def compliance_trends(
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """Return daily compliance trend points for the last ``days`` days."""
+    data = await get_compliance_trends(db, days=days)
+    return [ComplianceTrendPoint(**row).model_dump() for row in data]
+
+
+@router.get("/compliance/export")
+async def compliance_export(
+    format: str = Query("csv", pattern="^(csv|json)$"),
+    expiration_bucket: Optional[str] = None,
+    limit: int = Query(5000, ge=1, le=10000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
+):
+    """Export certification status rows (CSV or JSON)."""
+    try:
+        rows = await get_certification_export_rows(
+            db,
+            expiration_bucket=expiration_bucket,
+            limit=limit,
+            offset=offset,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Database query failed: {exc}") from exc
+
+    if format == "json":
+        return rows
+
+    if not rows:
+        buffer = io.StringIO()
+        writer = csv.DictWriter(buffer, fieldnames=CertificationExportRow.model_fields.keys())
+        writer.writeheader()
+        return StreamingResponse(
+            io.BytesIO(buffer.getvalue().encode("utf-8")),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=compliance_export.csv"},
+        )
+
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=rows[0].keys())
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+
+    return StreamingResponse(
+        io.BytesIO(buffer.getvalue().encode("utf-8")),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=compliance_export.csv"},
     )

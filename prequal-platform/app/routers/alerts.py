@@ -27,9 +27,11 @@ from app.schemas.compliance import (
     AlertNotificationResponse, AlertNotificationStatus,
     AlertNotificationUpdate, AlertNotificationCreate, AlertWithContextResponse,
     AlertPreferenceCreate, AlertPreferenceResponse,
-    NotificationPreferencesUpdate, NotificationPreferencesResponse
+    NotificationPreferencesUpdate, NotificationPreferencesResponse,
+    RecentAlert
 )
 from app.services.alert_service import scan_expirations, get_alert_summary, deliver_pending_alerts
+from app.services.analytics_pipeline import get_recent_alerts
 from app.routers.auth import get_current_user, TokenData
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
@@ -417,3 +419,16 @@ async def update_notification_preferences(
     await db.commit()
     await db.refresh(db_prefs)
     return db_prefs
+
+
+@router.get("/recent", response_model=list[RecentAlert])
+async def alerts_recent(
+    status: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user),
+) -> list[dict]:
+    """Return recent alert log entries backed by mv_recent_alerts."""
+    data = await get_recent_alerts(db, status=status, limit=limit, offset=offset)
+    return [RecentAlert(**row).model_dump() for row in data]
