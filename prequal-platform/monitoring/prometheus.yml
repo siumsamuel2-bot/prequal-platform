@@ -1,36 +1,52 @@
 # Prometheus configuration for Prequal Platform monitoring
-# This is a basic configuration - extend based on your deployment needs
+# Production-ready configuration with comprehensive scraping
 
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
-# Alertmanager configuration (optional)
-# alerting:
-#   alertmanagers:
-#     - static_configs:
-#         - targets:
-#           - alertmanager:9093
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
 
-# Rule files (optional)
-# rule_files:
-#   - "alerts.yml"
+# Rule files for alerting
+rule_files:
+  - "alerts.yml"
 
 # Scrape configurations
 scrape_configs:
-  # Prequal API Backend
+  # Prequal API Backend - application metrics
   - job_name: 'prequal-backend'
     static_configs:
       - targets: ['backend:8000']
     metrics_path: '/metrics'
     scrape_interval: 10s
+    scrape_timeout: 5s
 
-  # Node Exporter (system metrics)
+  # Node Exporter - system metrics (CPU, memory, disk, network)
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+
+  # cAdvisor - container metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 30s
 
   # Prometheus self-monitoring
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
+    scrape_interval: 30s
+
+  # Traefik reverse proxy metrics (if enabled)
+  - job_name: 'traefik'
+    static_configs:
+      - targets: ['traefik:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
