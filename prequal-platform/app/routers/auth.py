@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 import logging
 from datetime import datetime, timedelta
@@ -15,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.auth import User, Team, TeamMember
-from app.models.compliance import Project
+from app.models.auth import User, Team, TeamMember, Organization
+from app.models.compliance import Project, Subcontractor
 from app.schemas.compliance import (
     Token, TokenData, UserCreate, UserResponse, RegisterRequest, LoginRequest,
     UserWithTeams
@@ -477,6 +478,133 @@ async def request_password_reset(
     logger.info(f"Password reset requested for {request.email}. Reset link: {reset_url}")
     
     return MessageResponse(message="If the email exists, a password reset link has been sent")
+
+
+class OrganizationCreate(BaseModel):
+    name: str
+    slug: Optional[str] = None
+
+
+class OrganizationResponse(BaseModel):
+    id: str
+    name: str
+    slug: str
+    created_at: Optional[datetime] = None
+
+
+class OrganizationUpdate(BaseModel):
+    name: Optional[str] = None
+    slug: Optional[str] = None
+
+
+@router.post("/organizations", response_model=OrganizationResponse)
+async def create_organization(
+    org_data: OrganizationCreate,
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    slug = org_data.slug or org_data.name.lower().replace(" ", "-")
+    slug = re.sub(r'[^a-z0-9-]', '', slug)
+
+    existing_org = await db.execute(select(Organization).where(Organization.slug == slug))
+    if existing_org.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Organization slug already exists")
+
+    organization = Organization(name=org_data.name, slug=slug)
+    db.add(organization)
+    await db.commit()
+    await db.refresh(organization)
+
+    user = await get_user_by_id(db, UUID(current_user.user_id))
+    if user:
+        user.org_id = organization.id
+        await db.commit()
+
+    return OrganizationResponse(
+        id=str(organization.id),
+        name=organization.name,
+        slug=organization.slug,
+        created_at=organization.created_at
+    )
+
+
+@router.get("/organizations/me", response_model=OrganizationResponse)
+async def get_my_organization(
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    user = await get_user_by_id(db, UUID(current_user.user_id))
+    if not user or not user.org_id:
+        raise HTTPException(status_code=404, detail="No organization found")
+
+    result = await db.execute(select(Organization).where(Organization.id == user.org_id))
+    org = result.scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    return OrganizationResponse(
+        id=str(org.id),
+        name=org.name,
+        slug=org.slug,
+        created_at=org.created_at
+    )
+
+
+@router.patch("/organizations/me", response_model=OrganizationResponse)
+async def update_my_organization(
+    org_data: OrganizationUpdate,
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    user = await get_user_by_id(db, UUID(current_user.user_id))
+    if not user or not user.org_id:
+        raise HTTPException(status_code=404, detail="No organization found")
+
+    result = await db.execute(select(Organization).where(Organization.id == user.org_id))
+    org = result.scalar_one_or_none()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    if org_data.name is not None:
+        org.name = org_data.name
+    if org_data.slug is not None:
+        existing = await db.execute(select(Organization).where(Organization.slug == org_data.slug, Organization.id != org.id))
+        if existing.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="Organization slug already exists")
+        org.slug = org_data.slug
+
+    await db.commit()
+    await db.refresh(org)
+
+    return OrganizationResponse(
+        id=str(org.id),
+        name=org.name,
+        slug=org.slug,
+        created_at=org.created_at
+    )
+
+
+@router.get("/onboarding/status", response_model=dict)
+async def get_onboarding_status(
+    current_user: TokenData = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    user = await get_user_by_id(db, UUID(current_user.user_id))
+    has_org = user and user.org_id is not None
+
+    result = await db.execute(select(Project).where(Project.owner_id == user.id))
+    has_project = result.scalar_one_or_none() is not None
+
+    from app.models.compliance import Subcontractor
+    result = await db.execute(select(Subcontractor).limit(1))
+    has_subcontractor = result.scalar_one_or_none() is not None
+
+    return {
+        "has_organization": has_org,
+        "has_project": has_project,
+        "has_subcontractor": has_subcontractor,
+        "step": 1 if not has_org else 2 if not has_project else 3 if not has_subcontractor else 0
+    }
 
 
 @router.post("/password-reset/confirm", response_model=MessageResponse)
