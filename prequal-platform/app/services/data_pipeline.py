@@ -344,9 +344,8 @@ async def run_state_credential_sync(
 
 def _json_safe(value: Any) -> Any:
     """Serialize dict/list to JSON string for raw SQL binding on SQLite."""
-    if isinstance(value, (dict, list)):
-        return json.dumps(value)
-    return value
+    import json as _json
+    return _json.dumps(value, default=str) if isinstance(value, (dict, list)) else value
 
 
 async def _load_state_credential_record(db: AsyncSession, rec: dict) -> dict[str, Any]:
