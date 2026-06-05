@@ -1,10 +1,10 @@
 # Alert rules for Prequal Platform
-# These rules define when alerts should be triggered
+# Production alerting thresholds based on SLO requirements
 
 groups:
   - name: prequal-alerts
     rules:
-      # Service availability
+      # Service availability - critical alert
       - alert: ServiceDown
         expr: up{job="prequal-backend"} == 0
         for: 2m
@@ -12,9 +12,9 @@ groups:
           severity: critical
         annotations:
           summary: "Prequal API service is down"
-          description: "The Prequal API service has been unreachable for more than 2 minutes."
+          description: "The Prequal API service has been unreachable for more than 2 minutes. Immediate action required."
 
-      # High error rate
+      # High error rate - 5xx errors > 5% for 5 minutes
       - alert: HighErrorRate
         expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
         for: 5m
@@ -22,19 +22,19 @@ groups:
           severity: high
         annotations:
           summary: "High error rate detected"
-          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%). Check application logs and recent deployments."
 
-      # High latency
+      # High latency - p95 > 500ms for 5 minutes (per requirements)
       - alert: HighLatency
-        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
-        for: 10m
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
         labels:
           severity: medium
         annotations:
-          summary: "High latency detected"
-          description: "95th percentile latency is {{ $value | humanizeDuration }} (threshold: 2s)"
+          summary: "High API latency detected"
+          description: "95th percentile latency is {{ $value | humanizeDuration }} (threshold: 500ms). Review slow queries and external API calls."
 
-      # Database connection pool exhaustion
+      # Database connection pool exhaustion - > 80% utilization
       - alert: DatabasePoolExhaustion
         expr: db_pool_active_connections / db_pool_max_connections > 0.8
         for: 5m
@@ -42,9 +42,9 @@ groups:
           severity: high
         annotations:
           summary: "Database connection pool nearly exhausted"
-          description: "Database pool is {{ $value | humanizePercentage }} full"
+          description: "Database pool is {{ $value | humanizePercentage }} full. Consider increasing pool size or investigating connection leaks."
 
-      # Disk space low
+      # Disk space low - > 80% usage
       - alert: DiskSpaceLow
         expr: (node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes > 0.8
         for: 10m
@@ -52,4 +52,24 @@ groups:
           severity: medium
         annotations:
           summary: "Disk space running low"
-          description: "Disk usage is above 80%"
+          description: "Disk usage is above 80% on {{ $labels.mountpoint }}. Clean up old logs or expand storage."
+
+      # Container memory pressure
+      - alert: ContainerMemoryPressure
+        expr: container_memory_usage_bytes / container_spec_memory_limit_bytes > 0.9
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: "Container memory usage critical"
+          description: "Container {{ $labels.name }} is using {{ $value | humanizePercentage }} of memory limit."
+
+      # High request rate anomaly
+      - alert: HighRequestRate
+        expr: rate(http_requests_total[5m]) > 100
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Unusually high request rate"
+          description: "Request rate is {{ $value | humanize }} req/s. May indicate traffic spike or potential attack."
