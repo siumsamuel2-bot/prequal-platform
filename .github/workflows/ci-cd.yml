@@ -3,8 +3,29 @@ name: CI/CD Pipeline
 on:
   push:
     branches: [ main, develop ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      skip_tests:
+        description: 'Skip tests (emergency only)'
+        required: false
+        default: 'false'
+        type: boolean
+      rollback:
+        description: 'Rollback to previous version'
+        required: false
+        default: 'false'
+        type: boolean
 
 env:
   AWS_REGION: us-east-1
@@ -13,9 +34,35 @@ env:
   ECS_SERVICE: prequal-service
   ECS_TASK_DEFINITION: prequal-task
   CONTAINER_NAME: prequal-app
+  PYTHON_VERSION: '3.11'
+  PYTHON_VERSIONS: '["3.11", "3.12"]'
+  NODE_VERSION: '18'
+  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
 jobs:
-  test:
+  # Security scanning - runs first and blocks pipeline if secrets found
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks secrets scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+
+      - name: Upload gitleaks SARIF report
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: results.sarif
+        continue-on-error: true
+
+  # Security linting
+  security-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -23,14 +70,185 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run tests
-        run: npm test
+      - name: Run ESLint security plugin
+        run: npx eslint --plugin security .
+
+      - name: Run Semgrep security scan
+        run: npx semgrep --config auto --error
+
+  # Dependency vulnerability scanning
+  dependency-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          cd prequal-platform
+          pip install -r requirements.txt
+
+      - name: Run safety check for Python dependencies
+        run: |
+          pip install safety
+          cd prequal-platform
+          safety check --json > safety-report.json || true
+
+      - name: Upload dependency reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-reports
+          path: |
+            safety-report.json
+          retention-days: 7
+
+  # Python backend linting and type checking
+  python-lint:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f prequal-platform/requirements.txt ]; then
+            pip install -r prequal-platform/requirements.txt
+          fi
+          pip install flake8 black mypy ruff
+
+      - name: Lint with flake8
+        run: |
+          flake8 prequal-platform/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 prequal-platform/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Check formatting with black
+        run: |
+          black --check prequal-platform/
+
+      - name: Type check with mypy
+        run: |
+          mypy prequal-platform/ --ignore-missing-imports || true
+
+      - name: Run ruff linter
+        run: |
+          ruff check prequal-platform/
+
+  # Comprehensive test suite with coverage
+  test:
+    needs: [secrets-scan, security-lint, python-lint, dependency-check]
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_tests != 'true'
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Python dependencies
+        run: |
+          cd prequal-platform
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-mock
+
+      - name: Install frontend dependencies
+        working-directory: prequal-platform
+        run: npm ci --no-audit --no-fund
+
+      - name: Run frontend unit tests
+        working-directory: prequal-platform
+        run: npx jest --ci --coverage
+
+      - name: Upload frontend coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-coverage-report
+          path: prequal-platform/coverage/
+          retention-days: 7
+
+      - name: Run backend tests with coverage
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+        run: |
+          cd prequal-platform
+          pytest tests/ -v --cov=app --cov=api --cov-report=xml --cov-report=html --cov-fail-under=80
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./prequal-platform/coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+
+      - name: Upload coverage HTML report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: prequal-platform/htmlcov/
+          retention-days: 7
 
       - name: Lint code
         run: npm run lint
@@ -38,18 +256,139 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
-  build:
+  # Integration tests for compliance and analytics pipelines
+  integration-tests:
     needs: test
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_tests != 'true'
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd prequal-platform
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+
+      - name: Run compliance pipeline integration tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+          TEST_COMPLIANCE_DATA: true
+        run: |
+          cd prequal-platform
+          pytest tests/test_external_compliance_pipeline.py -v --cov=app/services/external_compliance_pipeline --cov-report=xml
+
+      - name: Run analytics pipeline integration tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+          TEST_ANALYTICS_DATA: true
+        run: |
+          cd prequal-platform
+          pytest tests/test_analytics_pipeline.py -v --cov=app/services/analytics_pipeline --cov-report=xml
+
+      - name: Upload integration test coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: integration
+          fail_ci_if_error: false
+
+  # Performance and load testing
+  performance-tests:
+    needs: integration-tests
+    runs-on: ubuntu-latest
+    if: github.event.inputs.skip_tests != 'true' && github.ref == 'refs/heads/develop'
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd prequal-platform
+          pip install -r requirements.txt
+          pip install pytest pytest-benchmark locust
+
+      - name: Run API performance tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+        run: |
+          cd prequal-platform
+          pytest tests/test_performance.py -v --benchmark-only --benchmark-json=benchmark.json
+
+      - name: Run load testing with Locust
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+        run: |
+          cd prequal-platform
+          timeout 300 locust -f tests/locustfile.py --headless -u 100 -r 10 --run-time 180s --stop-timeout 10 || echo "Load test completed"
+
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: performance-results
+          path: |
+            prequal-platform/benchmark.json
+            prequal-platform/locust_report.html
+          retention-days: 30
+
+  # Build Docker image with semantic versioning
+  build:
+    needs: [test, integration-tests]
     runs-on: ubuntu-latest
     outputs:
       image_uri: ${{ steps.ecr.outputs.image_uri }}
+      image_tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
       - name: Install dependencies
@@ -57,6 +396,22 @@ jobs:
 
       - name: Build application
         run: npm run build
+
+      - name: Generate semantic version
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            TAG=${GITHUB_REF#refs/tags/v}
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "version=$TAG" >> $GITHUB_OUTPUT
+          else
+            # Generate version from commit hash and branch
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            TIMESTAMP=$(date +%Y%m%d%H%M%S)
+            VERSION="0.0.0-dev.${TIMESTAMP}+${SHORT_SHA}"
+            echo "tag=${VERSION}" >> $GITHUB_OUTPUT
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -73,21 +428,105 @@ jobs:
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
+          IMAGE_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker build \
+            --build-arg VERSION=${{ steps.version.outputs.version }} \
+            --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+            --build-arg VCS_REF=${{ github.sha }} \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
       - name: Output image URI
         id: ecr
         run: |
-          echo "image_uri=${{ steps.login-ecr.outputs.registry }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "image_uri=${{ steps.login-ecr.outputs.registry }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.tag }}" >> $GITHUB_OUTPUT
 
-  deploy:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.ecr.outputs.image_uri }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # Zero-downtime deployment with rolling updates
+  deploy-staging:
     needs: build
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/develop' || github.event.inputs.environment == 'staging'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }}-staging --query taskDefinition > task-definition.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build.outputs.image_uri }}
+
+      - name: Deploy to ECS with rolling update
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}-staging
+          cluster: ${{ env.ECS_CLUSTER }}-staging
+          wait-for-service-stability: true
+          codedeploy-appspec: 'appspec.yaml'
+          codedeploy-application: prequal-staging
+          codedeploy-deployment-group: staging-deployment-group
+
+      - name: Run database migrations
+        run: |
+          aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }}-staging \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }}-migrate \
+            --network-mode awsvpc \
+            --launch-type FARGATE \
+            --overrides '{"containerOverrides":[{"name":"migrate","command":["python","migrate.py","upgrade"]}]}' \
+            --region ${{ env.AWS_REGION }} || echo "Migration task completed or not required"
+
+      - name: Wait for deployment to settle
+        run: sleep 30
+
+      - name: Health check
+        run: |
+          curl -f -s https://staging.prequal.yourcompany.com/api/health || exit 1
+
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests against staging environment..."
+          curl -f -s https://staging.prequal.yourcompany.com/api/health | grep -q '"status":"ok"' || exit 1
+
+  # Production deployment with blue-green strategy
+  deploy-production:
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     environment: production
     steps:
       - uses: actions/checkout@v4
@@ -115,13 +554,16 @@ jobs:
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ needs.build.outputs.image_uri }}
 
-      - name: Deploy to Amazon ECS service
+      - name: Deploy to ECS with blue-green deployment
         uses: aws-actions/amazon-ecs-deploy-task-definition@v1
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
+          codedeploy-appspec: 'appspec.yaml'
+          codedeploy-application: prequal-production
+          codedeploy-deployment-group: production-deployment-group
 
       - name: Run database migrations
         run: |
@@ -130,5 +572,187 @@ jobs:
             --task-definition ${{ env.ECS_TASK_DEFINITION }}-migrate \
             --network-mode awsvpc \
             --launch-type FARGATE \
-            --overrides '{"containerOverrides":[{"name":"migrate","command":["npm","run","migrate"]}]}' \
+            --overrides '{"containerOverrides":[{"name":"migrate","command":["python","migrate.py","upgrade"]}]}' \
             --region ${{ env.AWS_REGION }} || echo "Migration task completed or not required"
+
+      - name: Wait for deployment to settle
+        run: sleep 60
+
+      - name: Production health check
+        run: |
+          curl -f -s https://prequal.yourcompany.com/api/health || exit 1
+          curl -f -s https://prequal.yourcompany.com/ || exit 1
+
+      - name: Verify deployment version
+        run: |
+          echo "Verifying deployment version..."
+          RESPONSE=$(curl -s https://prequal.yourcompany.com/api/health)
+          echo "Health response: $RESPONSE"
+
+      - name: Notify success
+        if: success()
+        run: |
+          echo "✅ Production deployment completed successfully!"
+          echo "Version: ${{ needs.build.outputs.image_tag }}"
+          echo "Commit: ${{ github.sha }}"
+
+      - name: Notify failure
+        if: failure()
+        run: |
+          echo "❌ Production deployment failed!"
+          echo "Check CloudWatch logs for details"
+
+  # Generate changelog on tagged releases
+  generate-changelog:
+    needs: deploy-production
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        uses: mikepenz/release-changelog-builder-action@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          configuration: |
+            {
+              "categories": [
+                { "title": "### Features", "labels": ["feature", "enhancement"] },
+                { "title": "### Bug Fixes", "labels": ["bug", "fix"] },
+                { "title": "### Security", "labels": ["security"] },
+                { "title": "### Infrastructure", "labels": ["infrastructure", "devops", "ci/cd"] }
+              ],
+              "template": "#{{CHANGELOG}}\n\n## Summary\n\n- **Total Changes**: #{{TOTAL_CHANGES}}\n- **Contributors**: #{{CONTRIBUTORS}}\n\n#{{CATEGORIZED_CHANGES}}",
+              "owner": "${{ github.repository_owner }}",
+              "repo": "${{ github.event.repository.name }}"
+            }
+
+      - name: Upload changelog artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog
+          path: changelog.md
+          retention-days: 30
+
+  # Slack notifications
+  notify-slack-success:
+    needs: [deploy-staging, deploy-production]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Send success notification to Slack
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "✅ Deployment Successful",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*✅ Deployment Successful*\nEnvironment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Staging' }}\nCommit: ${{ github.sha }}\nAuthor: ${{ github.actor }}\nVersion: ${{ needs.build.outputs.image_tag }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  notify-slack-failure:
+    needs: [deploy-staging, deploy-production]
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Send failure notification to Slack
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "❌ Deployment Failed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*❌ Deployment Failed*\nEnvironment: ${{ github.ref == 'refs/heads/main' && 'Production' || 'Staging' }}\nCommit: ${{ github.sha }}\nAuthor: ${{ github.actor }}\n\nPlease check the workflow logs for details."
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  # Emergency rollback capability
+  rollback:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.rollback == 'true'
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get previous task definition
+        id: previous
+        run: |
+          if [ "${{ github.event.inputs.environment }}" == "production" ]; then
+            TASK_DEF="${{ env.ECS_TASK_DEFINITION }}"
+            SERVICE="${{ env.ECS_SERVICE }}"
+            CLUSTER="${{ env.ECS_CLUSTER }}"
+          else
+            TASK_DEF="${{ env.ECS_TASK_DEFINITION }}-staging"
+            SERVICE="${{ env.ECS_SERVICE }}-staging"
+            CLUSTER="${{ env.ECS_CLUSTER }}-staging"
+          fi
+          
+          # Get the second most recent task definition (previous version)
+          PREVIOUS_TASK_DEF_ARN=$(aws ecs list-task-definitions --family-prefix $TASK_DEF --sort DESC --max-results 2 --query 'taskDefinitionArns[1]' --output text)
+          echo "Rolling back to: $PREVIOUS_TASK_DEF_ARN"
+          echo "task_def_arn=$PREVIOUS_TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          echo "service=$SERVICE" >> $GITHUB_OUTPUT
+          echo "cluster=$CLUSTER" >> $GITHUB_OUTPUT
+
+      - name: Deploy previous version
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.previous.outputs.task_def_arn }}
+          service: ${{ steps.previous.outputs.service }}
+          cluster: ${{ steps.previous.outputs.cluster }}
+          wait-for-service-stability: true
+
+      - name: Verify rollback
+        run: |
+          echo "Waiting for rollback to complete..."
+          sleep 60
+          if [ "${{ github.event.inputs.environment }}" == "production" ]; then
+            curl -f -s https://prequal.yourcompany.com/api/health || exit 1
+          else
+            curl -f -s https://staging.prequal.yourcompany.com/api/health || exit 1
+          fi
+          echo "✅ Rollback completed successfully"
+
+      - name: Notify rollback to Slack
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "🔄 Rollback Completed",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*🔄 Rollback Completed*\nEnvironment: ${{ github.event.inputs.environment }}\nPrevious version deployed successfully.\nTriggered by: ${{ github.actor }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
