@@ -26,6 +26,8 @@ from typing import Any, Optional
 
 import aiohttp
 
+from app.services.resilience import AsyncCircuitBreaker, RetryableHTTPError, resilient_call
+
 logger = logging.getLogger(__name__)
 
 OSHA_BASE_URL = os.getenv("OSHA_API_URL", "https://www.whistleblower.gov/api/cases")
@@ -40,7 +42,8 @@ class OSHAClientError(Exception):
 
 
 class OSHAClient:
-    """Async client for OSHA Whistleblower API with basic rate limiting."""
+    """Async client for OSHA Whistleblower API with rate limiting, retry with
+    exponential backoff, and circuit-breaker protection."""
 
     def __init__(
         self,
@@ -55,6 +58,7 @@ class OSHAClient:
         self._limiter = asyncio.Semaphore(int(rate_limit_hz))
         self._last_request_at: float = 0.0
         self._lock = asyncio.Lock()
+        self._breaker = AsyncCircuitBreaker(name="osha")
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -91,7 +95,7 @@ class OSHAClient:
         "Fetches a page of OSHA cases. Returns dict with {'results': [...], ...}."
         params: dict[str, Any] = {
             "page": page,
-            "page_size": min(page_size, 100),
+            "page_size": min(page_size, 500),
         }
         if search:
             params["search"] = search
@@ -110,15 +114,36 @@ class OSHAClient:
             logger.debug(
                 "OSHA request: GET %s with params=%s", self.base_url, params
             )
-            async with session.get(self.base_url, params=params) as resp:
-                text = await resp.text()
-                if resp.status != 200:
-                    logger.error(
-                        "OSHA API error: status=%d body=%s", resp.status, text[:500]
-                    )
-                    resp.raise_for_status()
-                data = json.loads(text)
-                return data  # type: ignore[no-any-return]
+            return await resilient_call(
+                lambda: self._fetch_page(session, params),
+                breaker=self._breaker,
+            )
+
+    async def _fetch_page(
+        self,
+        session: aiohttp.ClientSession,
+        params: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Fetch a single page of results, classifying HTTP errors.
+
+        Server errors (5xx) and rate limiting (429) raise
+        ``RetryableHTTPError`` so the retry layer retries them; other
+        client errors raise ``OSHAClientError`` and fail fast.
+        """
+        async with session.get(self.base_url, params=params) as resp:
+            text = await resp.text()
+            if resp.status == 429 or resp.status >= 500:
+                logger.warning(
+                    "OSHA API transient error: status=%d body=%s", resp.status, text[:500]
+                )
+                raise RetryableHTTPError(f"OSHA API returned HTTP {resp.status}")
+            if resp.status != 200:
+                logger.error(
+                    "OSHA API error: status=%d body=%s", resp.status, text[:500]
+                )
+                raise OSHAClientError(f"OSHA API returned HTTP {resp.status}: {text[:200]}")
+            data = json.loads(text)
+            return data  # type: ignore[no-any-return]
 
     async def paginate_cases(
         self,
