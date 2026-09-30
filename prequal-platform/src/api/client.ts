@@ -68,6 +68,14 @@ class ApiClient {
   async delete<T>(endpoint: string, options?: RequestOptions): Promise<T> {
     return this.request<T>(endpoint, { ...options, method: 'DELETE' });
   }
+
+  async patch<T>(endpoint: string, data?: unknown, options?: RequestOptions): Promise<T> {
+    return this.request<T>(endpoint, {
+      ...options,
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
 }
 
 export const apiClient = new ApiClient(API_BASE_URL);
@@ -89,6 +97,61 @@ export interface Team {
   role: string;
   joined_at?: string;
 }
+
+export interface Organization {
+  id: string;
+  name: string;
+  slug: string;
+  created_at?: string;
+}
+
+export interface OnboardingStatus {
+  has_organization: boolean;
+  has_project: boolean;
+  has_subcontractor: boolean;
+  step: number;
+}
+
+export interface Project {
+  id: string;
+  project_name: string;
+  project_number?: string;
+  description?: string;
+  client_name?: string;
+  client_contact?: string;
+  start_date?: string;
+  estimated_end_date?: string;
+  actual_end_date?: string;
+  address_line1?: string;
+  address_line2?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
+  country?: string;
+  status: string;
+  budget?: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface SubcontractorWithDetails extends Subcontractor {
+  certifications: Certification[];
+  violations: Violation[];
+  active_projects_count: number;
+  compliance_score?: number;
+}
+
+export const organizationApi = {
+  create: (data: { name: string; slug?: string }) =>
+    apiClient.post<Organization>('/auth/organizations', data),
+
+  getMe: () => apiClient.get<Organization>('/auth/organizations/me'),
+
+  update: (data: { name?: string; slug?: string }) =>
+    apiClient.patch<Organization>('/auth/organizations/me', data),
+
+  getOnboardingStatus: () => apiClient.get<OnboardingStatus>('/auth/onboarding/status'),
+};
 
 export const authApi = {
   login: (username: string, password: string) =>
@@ -112,6 +175,20 @@ export const authApi = {
 
   confirmPasswordReset: (token: string, newPassword: string) =>
     apiClient.post<{ message: string }>('/auth/password-reset/confirm', { token, new_password: newPassword }),
+
+  getMFAStatus: () => apiClient.get<{ mfa_enabled: boolean; mfa_method: string | null }>('/auth/mfa/status'),
+
+  enableMFA: (password: string) =>
+    apiClient.post<{ secret: string; otpauth_url: string }>('/auth/mfa/enable', { password }),
+
+  verifyMFA: (token: string) =>
+    apiClient.post<{ message: string }>('/auth/mfa/verify', { token }),
+
+  disableMFA: (password: string, mfa_token: string) =>
+    apiClient.post<{ message: string }>('/auth/mfa/disable', { password, mfa_token }),
+
+  validateMFA: (userId: string, mfaToken: string) =>
+    apiClient.post<{ access_token: string; token_type: string }>(`/auth/mfa/validate?user_id=${encodeURIComponent(userId)}&mfa_token=${encodeURIComponent(mfaToken)}`),
 };
 
 export const subcontractorApi = {
@@ -139,9 +216,52 @@ export const subcontractorApi = {
 };
 
 export const complianceApi = {
-  getStatus: () => apiClient.get<ComplianceStatus>('/compliance/status'),
+  getStatus: (projectId?: string) => apiClient.get<ComplianceStatus[]>('/compliance/status', projectId ? { params: { project_id: projectId } } : undefined),
 
   getAlerts: () => apiClient.get<ComplianceAlert[]>('/compliance/alerts'),
+
+  getStateCredentials: (params?: { subcontractor_id?: string; state_code?: string }) =>
+    apiClient.get<StateCredentialRecord[]>('/compliance/state-credentials', params ? { params: params } : undefined),
+
+  getStateCredentialsSummary: () => apiClient.get<StateCredentialSummary>('/compliance/state-credentials/summary'),
+};
+
+export interface StateCredentialRecord {
+  id: number;
+  state_code: string;
+  credential_number: string;
+  credential_type: string;
+  issuing_state: string;
+  holder_name?: string;
+  holder_address?: string;
+  holder_city?: string;
+  holder_state?: string;
+  holder_zip?: string;
+  issue_date?: string;
+  expiration_date?: string;
+  status: string;
+  external_source_id?: string;
+  external_source_url?: string;
+  last_synced_at?: string;
+}
+
+export interface StateCredentialSummary {
+  total: number;
+  active: number;
+  expiring_soon: number;
+  expired: number;
+  unmatched: number;
+}
+
+export const projectApi = {
+  getAll: () => apiClient.get<Project[]>('/projects'),
+
+  getById: (id: string) => apiClient.get<Project>(`/projects/${id}`),
+
+  getSubcontractors: (projectId: string) => apiClient.get<SubcontractorWithDetails[]>(`/projects/${projectId}/subcontractors`),
+
+  quickAddSubcontractor: (projectId: string, data: Omit<Subcontractor, 'id'>) =>
+    apiClient.post<SubcontractorWithDetails>(`/projects/${projectId}/subcontractors/quick-add`, data),
 };
 
 export const contractorApi = {
@@ -236,6 +356,7 @@ export interface Violation {
 export interface ComplianceStatus {
   subcontractor_id: string;
   company_name: string;
+  state?: string;
   compliance_score: number;
   status: string;
   active_certifications: number;
@@ -320,4 +441,229 @@ export interface DashboardSummary {
 
 export const dashboardApi = {
   getSummary: () => apiClient.get<DashboardSummary>('/dashboard/summary'),
+};
+
+export interface BillingPlan {
+  plan: string;
+  name: string;
+  price: string;
+  limit: number;
+  features: string[];
+}
+
+export interface SubscriptionStatus {
+  plan: string;
+  status: string;
+  current_period_end: string | null;
+  subcontractor_limit: number;
+  subcontractor_count: number;
+  can_add_more: boolean;
+}
+
+export const billingApi = {
+  getPlans: () => apiClient.get<BillingPlan[]>('/billing/plans'),
+  getSubscription: () => apiClient.get<SubscriptionStatus>('/billing/subscription'),
+  createCheckout: (plan: string) => apiClient.post<{ checkout_url: string }>('/billing/checkout', { plan }),
+  createPortal: () => apiClient.post<{ portal_url: string }>('/billing/portal', {}),
+};
+
+export interface FeatureAdoptionData {
+  feature_name: string;
+  event_date?: string;
+  total_events: number;
+  unique_users: number;
+  view_count: number;
+  action_count: number;
+  export_count: number;
+  computed_at?: string;
+}
+
+export interface SystemHealthData {
+  service_name: string;
+  metric_name: string;
+  metric_unit?: string;
+  avg_value: number;
+  min_value: number;
+  max_value: number;
+  p95_value: number;
+  total_count: number;
+  computed_at?: string;
+}
+
+export interface PerformanceMetricsData {
+  requests_per_second: number;
+  error_rate_percent: number;
+  avg_response_time_ms: number;
+  p50_response_time_ms: number;
+  p95_response_time_ms: number;
+  p99_response_time_ms: number;
+  active_db_connections: number;
+  max_db_connections: number;
+  active_requests: number;
+  rate_limit_hits: number;
+  computed_at?: string;
+}
+
+export interface ComplianceTrendPoint {
+  date?: string;
+  active_subcontractors: number;
+  valid_certifications: number;
+  expired_certifications: number;
+  open_violations: number;
+  open_osha_violations: number;
+  compliance_percentage: number;
+  computed_at?: string;
+}
+
+export interface ComplianceSummaryData {
+  total_subcontractors: number;
+  active_subcontractors: number;
+  suspended_subcontractors: number;
+  blacklisted_subcontractors: number;
+  compliant_subcontractors: number;
+  compliance_rate: number;
+  expiring_soon_30d: number;
+  expiring_soon_60d: number;
+  open_violations: number;
+  open_osha_violations: number;
+  total_open_penalties: number;
+  valid_certifications: number;
+  expired_certifications: number;
+  pending_verification_certs: number;
+  computed_at?: string;
+}
+
+export interface PilotEngagementData {
+  total_organizations: number;
+  active_organizations_30d: number;
+  total_users: number;
+  active_users_30d: number;
+  avg_events_per_org: number;
+  onboarding_completion_rate: number;
+  feature_adoption_by_org: Record<string, number>;
+  recently_active_orgs: Array<{
+    organization_id: number;
+    organization_name: string;
+    last_activity: string;
+  }>;
+  engagement_trends: Array<{
+    date: string;
+    active_organizations: number;
+    total_events: number;
+  }>;
+}
+
+export const analyticsApi = {
+  getFeatureAdoption: (params?: { feature_name?: string; days?: number; limit?: number; skip?: number }) =>
+    apiClient.get<FeatureAdoptionData[]>('/analytics/feature-adoption', params?.limit || params?.skip ? { params: { ...(params.feature_name && { feature_name: params.feature_name }), ...(params.days && { days: String(params.days) }), ...(params.limit && { limit: String(params.limit) }), ...(params.skip && { skip: String(params.skip) }) } } : undefined),
+
+  getSystemHealth: (params?: { service_name?: string; metric_name?: string }) =>
+    apiClient.get<SystemHealthData[]>('/analytics/system-health', params?.service_name || params?.metric_name ? { params: { ...(params.service_name && { service_name: params.service_name }), ...(params.metric_name && { metric_name: params.metric_name }) } } : undefined),
+
+  getPerformanceMetrics: () =>
+    apiClient.get<PerformanceMetricsData>('/analytics/performance'),
+
+  getPilotEngagement: (days?: number) =>
+    apiClient.get<PilotEngagementData>(`/analytics/pilot-engagement${days ? `?days=${days}` : ''}`),
+};
+
+export const complianceAnalyticsApi = {
+  getTrends: (days: number = 30) =>
+    apiClient.get<ComplianceTrendPoint[]>(`/compliance/trends?days=${days}`),
+
+  getSummary: () =>
+    apiClient.get<ComplianceSummaryData>('/compliance/summary'),
+};
+
+export type EventType = 'page_view' | 'feature_usage' | 'onboarding_completion' | 'subcontractor_action' | 'cert_upload' | 'feedback_submit' | 'report_export';
+
+export interface AnalyticsEvent {
+  event_type: EventType;
+  event_name: string;
+  event_data?: Record<string, unknown>;
+  page_url?: string;
+  referrer_url?: string;
+  duration_ms?: number;
+}
+
+export const analyticsTracker = {
+  async track(event: AnalyticsEvent): Promise<{ id: string; status: string }> {
+    const token = localStorage.getItem('access_token');
+    const response = await fetch(`${API_BASE_URL}/analytics/events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+      body: JSON.stringify(event),
+    });
+    if (!response.ok) {
+      console.warn('Analytics tracking failed:', response.statusText);
+    }
+    return response.json();
+  },
+
+  trackPageView(pageName: string, metadata?: Record<string, unknown>) {
+    return this.track({
+      event_type: 'page_view',
+      event_name: pageName,
+      event_data: metadata,
+      page_url: window.location.pathname,
+      referrer_url: document.referrer || undefined,
+    });
+  },
+
+  trackFeatureUsage(featureName: string, action: string, metadata?: Record<string, unknown>) {
+    return this.track({
+      event_type: 'feature_usage',
+      event_name: `${featureName}_${action}`,
+      event_data: metadata,
+      page_url: window.location.pathname,
+    });
+  },
+
+  trackOnboarding(step: string, completed: boolean, metadata?: Record<string, unknown>) {
+    return this.track({
+      event_type: 'onboarding_completion',
+      event_name: `onboarding_${step}`,
+      event_data: { ...metadata, completed },
+      page_url: window.location.pathname,
+    });
+  },
+
+  trackSubcontractorAction(action: 'add' | 'edit' | 'delete' | 'view', subcontractorId: string, metadata?: Record<string, unknown>) {
+    return this.track({
+      event_type: 'subcontractor_action',
+      event_name: `subcontractor_${action}`,
+      event_data: { ...metadata, subcontractor_id: subcontractorId },
+      page_url: window.location.pathname,
+    });
+  },
+
+  trackCertUpload(subcontractorId: string, certificationType: string, success: boolean) {
+    return this.track({
+      event_type: 'cert_upload',
+      event_name: 'certification_uploaded',
+      event_data: { subcontractor_id: subcontractorId, certification_type: certificationType, success },
+      page_url: window.location.pathname,
+    });
+  },
+
+  trackFeedbackSubmit(feedbackType: string, hasRating: boolean) {
+    return this.track({
+      event_type: 'feedback_submit',
+      event_name: 'feedback_submitted',
+      event_data: { feedback_type: feedbackType, has_rating: hasRating },
+      page_url: window.location.pathname,
+    });
+  },
+
+  trackReportExport(reportType: string, format: 'csv' | 'pdf') {
+    return this.track({
+      event_type: 'report_export',
+      event_name: `${reportType}_export`,
+      event_data: { format },
+      page_url: window.location.pathname,
+    });
+  },
 };
