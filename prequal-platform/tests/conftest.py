@@ -16,6 +16,8 @@ import pytest_asyncio  # noqa: E402
 import pytest  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from httpx import AsyncClient, ASGITransport  # noqa: E402
+from sqlalchemy.ext.compiler import compiles  # noqa: E402
+from sqlalchemy.dialects.postgresql import UUID as PGUUID  # noqa: E402
 
 from api.main import app as fastapi_app  # noqa: E402
 from app.database import AsyncSessionLocal, Base, engine  # noqa: E402
@@ -24,12 +26,26 @@ from app.database import AsyncSessionLocal, Base, engine  # noqa: E402
 import app.models.compliance  # noqa: F401,E402
 
 
+@compiles(PGUUID, "sqlite")
+def _compile_pg_uuid_sqlite(type_, compiler, **kw):
+    """Render PostgreSQL UUID columns as CHAR(32) under SQLite.
+
+    SQLite would otherwise give a bare ``UUID`` column NUMERIC affinity and
+    coerce all-digit hex UUID strings (e.g. ``00000000-...-0001``) into
+    integers/floats, which then fail to hydrate back into UUID objects.
+    """
+    return "CHAR(32)"
+
+
 @pytest_asyncio.fixture(scope="session")
 async def db_engine():
     """Create an async engine and initialize all tables."""
     # Clean up any stale test DB from a previous run
     if os.path.exists(_test_db_path):
-        os.remove(_test_db_path)
+        try:
+            os.remove(_test_db_path)
+        except PermissionError:
+            pass  # Windows may hold the file; create_all below is idempotent
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Analytics materialized views are PostgreSQL-only; create regular

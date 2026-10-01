@@ -4,34 +4,49 @@ import secrets
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+import pyotp
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models.auth import User, Team, TeamMember, Organization
+from app.models.auth import User, Team, TeamMember, Organization, RefreshToken
 from app.models.compliance import Project, Subcontractor
 from app.schemas.compliance import (
     Token, TokenData, UserCreate, UserResponse, RegisterRequest, LoginRequest,
     UserWithTeams
 )
+from app.services.security_service import (
+    check_rate_limit, check_account_lockout, create_account_lockout,
+    clear_failed_login_attempts, log_auth_event, MAX_FAILED_ATTEMPTS,
+    LOCKOUT_DURATION_MINUTES
+)
+from app.middleware.rate_limit import limiter, RateLimitTiers
+from app.services.notification_service import send_welcome_email, send_setup_complete_email
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 
-SECRET_KEY = os.getenv("SECRET_KEY", "54EC409A2CC6B37C639C332264284D9A89CC5546B2022CA3A910178A3A202C53")
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise ValueError("SECRET_KEY environment variable must be set")
+if len(SECRET_KEY) < 32:
+    raise ValueError("SECRET_KEY must be at least 32 bytes for HS256 security")
+
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
-REFRESH_TOKEN_EXPIRE_DAYS = 7
-PASSWORD_RESET_TOKEN_EXPIRE_HOURS = 1
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
+REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+ACCESS_TOKEN_EXPIRE_HOURS = int(os.getenv("ACCESS_TOKEN_EXPIRE_HOURS", "0"))
+REFRESH_TOKEN_EXPIRE_HOURS = int(os.getenv("REFRESH_TOKEN_EXPIRE_HOURS", "0"))
+PASSWORD_RESET_TOKEN_EXPIRE_HOURS = int(os.getenv("PASSWORD_RESET_TOKEN_EXPIRE_HOURS", "1"))
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
@@ -46,7 +61,22 @@ class PasswordResetConfirmRequest(BaseModel):
     new_password: str
 
 
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class MessageResponse(BaseModel):
+    message: str
+
+
+class TokenRefreshResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+class LogoutResponse(BaseModel):
     message: str
 
 
@@ -58,18 +88,84 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, password_changed_at: Optional[datetime] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES, hours=ACCESS_TOKEN_EXPIRE_HOURS))
     to_encode.update({"exp": expire, "type": "access"})
+    if password_changed_at:
+        to_encode["password_changed_at"] = password_changed_at.isoformat() if isinstance(password_changed_at, datetime) else password_changed_at
+    to_encode = _add_security_claims(to_encode)
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def create_refresh_token(data: dict) -> str:
+def _add_security_claims(to_encode: dict) -> dict:
+    from uuid import uuid4
+    now = datetime.utcnow()
+    jti = str(uuid4())
+    to_encode["iat"] = now
+    to_encode["nbf"] = now
+    to_encode["jti"] = jti
+    return to_encode
+
+
+def create_refresh_token(data: dict, password_changed_at: Optional[datetime] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS, hours=REFRESH_TOKEN_EXPIRE_HOURS)
     to_encode.update({"exp": expire, "type": "refresh"})
+    if password_changed_at:
+        to_encode["password_changed_at"] = password_changed_at.isoformat() if isinstance(password_changed_at, datetime) else password_changed_at
+    to_encode = _add_security_claims(to_encode)
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+async def create_and_store_refresh_token(
+    db: AsyncSession,
+    user_id: UUID,
+    password_changed_at: Optional[datetime] = None
+) -> tuple[str, str]:
+    jti = str(uuid.uuid4())
+    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS, hours=REFRESH_TOKEN_EXPIRE_HOURS)
+    to_encode = {
+        "sub": str(user_id),
+        "user_id": str(user_id),
+        "exp": expire,
+        "type": "refresh",
+        "iat": datetime.utcnow(),
+        "nbf": datetime.utcnow(),
+        "jti": jti,
+    }
+    if password_changed_at:
+        to_encode["password_changed_at"] = password_changed_at.isoformat() if isinstance(password_changed_at, datetime) else password_changed_at
+    token = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    db_refresh_token = RefreshToken(
+        user_id=user_id,
+        jti=jti,
+        expires_at=expire,
+        revoked=False,
+    )
+    db.add(db_refresh_token)
+    await db.commit()
+    return token, jti
+
+
+async def revoke_refresh_token(db: AsyncSession, jti: str) -> bool:
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.jti == jti)
+    )
+    token = result.scalar_one_or_none()
+    if token and not token.revoked:
+        token.revoked = True
+        token.revoked_at = datetime.utcnow()
+        await db.commit()
+        return True
+    return False
+
+
+async def get_refresh_token_by_jti(db: AsyncSession, jti: str) -> Optional[RefreshToken]:
+    result = await db.execute(
+        select(RefreshToken).where(RefreshToken.jti == jti)
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_current_user(
@@ -81,28 +177,35 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    password_changed_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Session invalidated due to password change. Please log in again.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "access":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            raise credentials_exception
         email: str = payload.get("sub")
         user_id: str = payload.get("user_id")
         role: str = payload.get("role", "viewer")
-        if email is None:
+        token_password_changed_at = payload.get("password_changed_at")
+        if email is None or user_id is None:
             raise credentials_exception
         token_data = TokenData(sub=email, user_id=user_id)
         token_data.role = role
         token_data.team_id = payload.get("team_id")
+        user = await get_user_by_id(db, UUID(user_id))
+        if user:
+            token_data.name = user.name
+            token_data.email = user.email
+            if user.password_changed_at:
+                token_ts = datetime.fromisoformat(token_password_changed_at.replace("Z", "+00:00")) if token_password_changed_at else None
+                user_pw_ts = user.password_changed_at.replace(tzinfo=None) if user.password_changed_at.tzinfo else user.password_changed_at
+                if token_ts and token_ts < user_pw_ts:
+                    raise password_changed_exception
     except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise credentials_exception
     except jwt.InvalidTokenError:
         raise credentials_exception
     return token_data
@@ -124,10 +227,6 @@ def require_manager_or_admin(current_user: TokenData = Depends(get_current_user)
         )
 
 
-def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
-    pass
-
-
 async def get_user_by_email(db: AsyncSession, email: str) -> Optional[User]:
     result = await db.execute(select(User).where(User.email == email))
     return result.scalar_one_or_none()
@@ -147,8 +246,9 @@ async def authenticate_user(db: AsyncSession, email: str, password: str) -> Opti
     return user
 
 
-@router.post("/register", response_model=Token)
-async def register(register_request: RegisterRequest, db: AsyncSession = Depends(get_db)):
+@router.post("/register", response_model=TokenRefreshResponse)
+@limiter.limit(RateLimitTiers.UNAUTHENTICATED_DEFAULT)
+async def register(request: Request, register_request: RegisterRequest, db: AsyncSession = Depends(get_db)):
     existing_user = await get_user_by_email(db, register_request.email)
     if existing_user:
         raise HTTPException(
@@ -160,7 +260,8 @@ async def register(register_request: RegisterRequest, db: AsyncSession = Depends
         email=register_request.email,
         name=register_request.name,
         hashed_password=get_password_hash(register_request.password),
-        role="admin"
+        role="admin",
+        password_changed_at=datetime.utcnow()
     )
     db.add(user)
     await db.commit()
@@ -184,20 +285,61 @@ async def register(register_request: RegisterRequest, db: AsyncSession = Depends
     await db.commit()
     
     access_token = create_access_token(
-        data={"sub": user.email, "user_id": str(user.id), "role": user.role, "team_id": str(team.id)}
+        data={"sub": user.email, "user_id": str(user.id), "role": user.role, "team_id": str(team.id)},
+        password_changed_at=user.password_changed_at
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    refresh_token, _ = await create_and_store_refresh_token(
+        db, user.id, user.password_changed_at
+    )
+
+    try:
+        await send_welcome_email(user.email)
+    except Exception as e:
+        logger.warning(f"Failed to send welcome email to {user.email}: {e}")
+
+    return TokenRefreshResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer"
+    )
 
 
-@router.post("/login", response_model=Token)
-async def login(login_request: LoginRequest, db: AsyncSession = Depends(get_db)):
+@router.post("/login", response_model=TokenRefreshResponse)
+@limiter.limit(RateLimitTiers.UNAUTHENTICATED_LOGIN)
+async def login(login_request: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
+    client_ip = request.client.host if request.client else None
+    allowed, remaining = check_rate_limit(f"login:{login_request.username}", max_requests=10, window_seconds=60)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please try again later."
+        )
+
+    lockout = await check_account_lockout(db, login_request.username)
+    if lockout:
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail="Account temporarily locked due to too many failed attempts. Please try again later."
+        )
+
     user = await authenticate_user(db, login_request.username, login_request.password)
     if not user:
+        await log_auth_event(db, "login_failed", email=login_request.username, ip_address=client_ip, status="failure")
+        await create_account_lockout(db, login_request.username, "Too many failed login attempts")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials"
         )
-    
+
+    await clear_failed_login_attempts(login_request.username)
+
+    if user.mfa_enabled:
+        await log_auth_event(db, "mfa_required", email=user.email, user_id=user.id, ip_address=client_ip, status="mfa_required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"MFA_REQUIRED:{user.id}"
+        )
+
     result = await db.execute(
         select(TeamMember)
         .options(selectinload(TeamMember.team))
@@ -206,26 +348,64 @@ async def login(login_request: LoginRequest, db: AsyncSession = Depends(get_db))
     )
     membership = result.first()
     team_id = str(membership.team.id) if membership else None
-    
+
+    await log_auth_event(db, "login_success", email=user.email, user_id=user.id, ip_address=client_ip, status="success")
+
     access_token = create_access_token(
-        data={"sub": user.email, "user_id": str(user.id), "role": user.role, "team_id": team_id}
+        data={"sub": user.email, "user_id": str(user.id), "role": user.role, "team_id": team_id},
+        password_changed_at=user.password_changed_at
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    refresh_token, _ = await create_and_store_refresh_token(
+        db, user.id, user.password_changed_at
+    )
+    return TokenRefreshResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer"
+    )
 
 
-@router.post("/token", response_model=Token)
+@router.post("/token", response_model=TokenRefreshResponse)
+@limiter.limit(RateLimitTiers.UNAUTHENTICATED_LOGIN)
 async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
+    request: Request = None,
     db: AsyncSession = Depends(get_db)
 ):
+    client_ip = request.client.host if request and request.client else None
+    allowed, remaining = check_rate_limit(f"token:{form_data.username}", max_requests=10, window_seconds=60)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please try again later."
+        )
+
+    lockout = await check_account_lockout(db, form_data.username)
+    if lockout:
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail="Account temporarily locked due to too many failed attempts."
+        )
+
     user = await authenticate_user(db, form_data.username, form_data.password)
     if not user:
+        await log_auth_event(db, "token_login_failed", email=form_data.username, ip_address=client_ip, status="failure")
+        await create_account_lockout(db, form_data.username, "Too many failed login attempts")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
+    await clear_failed_login_attempts(form_data.username)
+
+    if user.mfa_enabled:
+        await log_auth_event(db, "token_mfa_required", email=user.email, user_id=user.id, ip_address=client_ip, status="mfa_required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"MFA_REQUIRED:{user.id}"
+        )
+
     result = await db.execute(
         select(TeamMember)
         .options(selectinload(TeamMember.team))
@@ -234,39 +414,63 @@ async def login_for_access_token(
     )
     membership = result.first()
     team_id = str(membership.team.id) if membership else None
-    
+
+    await log_auth_event(db, "token_login_success", email=user.email, user_id=user.id, ip_address=client_ip, status="success")
+
     access_token = create_access_token(
-        data={"sub": user.email, "user_id": str(user.id), "role": user.role, "team_id": team_id}
+        data={"sub": user.email, "user_id": str(user.id), "role": user.role, "team_id": team_id},
+        password_changed_at=user.password_changed_at
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    refresh_token, _ = await create_and_store_refresh_token(
+        db, user.id, user.password_changed_at
+    )
+    return TokenRefreshResponse(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer"
+    )
 
 
-@router.post("/refresh", response_model=Token)
+@router.post("/refresh", response_model=TokenRefreshResponse)
 async def refresh_token(refresh_token: str = Query(...), db: AsyncSession = Depends(get_db)):
+    password_changed_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Session invalidated due to password change. Please log in again.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    revoked_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Refresh token has been revoked. Please log in again.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
         payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "refresh":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token type"
-            )
+            raise credentials_exception
+        jti = payload.get("jti")
+        if not jti:
+            raise credentials_exception
+        token_password_changed_at = payload.get("password_changed_at")
         user_id = payload.get("user_id")
+        if not user_id:
+            raise credentials_exception
+        db_token = await get_refresh_token_by_jti(db, jti)
+        if not db_token or db_token.revoked:
+            raise revoked_exception
         user = await get_user_by_id(db, UUID(user_id))
         if not user or not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or inactive"
-            )
+            raise credentials_exception
+        if token_password_changed_at and user.password_changed_at:
+            token_ts = datetime.fromisoformat(token_password_changed_at.replace("Z", "+00:00"))
+            user_pw_ts = user.password_changed_at.replace(tzinfo=None) if user.password_changed_at.tzinfo else user.password_changed_at
+            if token_ts < user_pw_ts:
+                raise password_changed_exception
     except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token has expired"
-        )
+        raise credentials_exception
     except jwt.InvalidTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
-        )
+        raise credentials_exception
+    
+    await revoke_refresh_token(db, jti)
     
     result = await db.execute(
         select(TeamMember)
@@ -278,17 +482,26 @@ async def refresh_token(refresh_token: str = Query(...), db: AsyncSession = Depe
     team_id = str(membership.team.id) if membership else None
     
     access_token = create_access_token(
-        data={"sub": user.email, "user_id": str(user.id), "role": user.role, "team_id": team_id}
+        data={"sub": user.email, "user_id": str(user.id), "role": user.role, "team_id": team_id},
+        password_changed_at=user.password_changed_at
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    new_refresh_token, _ = await create_and_store_refresh_token(
+        db, user.id, user.password_changed_at
+    )
+    return TokenRefreshResponse(
+        access_token=access_token,
+        refresh_token=new_refresh_token,
+        token_type="bearer"
+    )
 
 
 @router.get("/me", response_model=UserWithTeams)
-async def read_users_me(
+async def get_current_user_me(
     current_user: TokenData = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    user = await get_user_by_email(db, current_user.sub)
+    """Get current authenticated user with full details including teams."""
+    user = await get_user_by_id(db, UUID(current_user.user_id))
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -302,14 +515,15 @@ async def read_users_me(
     )
     memberships = result.scalars().all()
     
-    teams = []
-    for m in memberships:
-        teams.append({
+    teams = [
+        {
             "id": str(m.team.id),
             "name": m.team.name,
             "role": m.role,
             "joined_at": m.joined_at.isoformat() if m.joined_at else None
-        })
+        }
+        for m in memberships
+    ]
     
     return UserWithTeams(
         id=user.id,
@@ -322,310 +536,22 @@ async def read_users_me(
     )
 
 
-@router.get("/users", response_model=list[UserResponse])
-async def list_users(
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(
+    request: Request,
     current_user: TokenData = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    require_admin(current_user)
-    result = await db.execute(select(User).where(User.is_active == True))
-    users = result.scalars().all()
-    return [UserResponse.model_validate(u) for u in users]
-
-
-@router.post("/teams", response_model=dict)
-async def create_team(
-    name: str,
-    description: Optional[str] = None,
-    current_user: TokenData = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    require_manager_or_admin(current_user)
-    team = Team(
-        name=name,
-        description=description,
-        owner_id=UUID(current_user.user_id)
+    """Logout current user by revoking their refresh tokens."""
+    await db.execute(
+        delete(RefreshToken).where(RefreshToken.user_id == UUID(current_user.user_id))
     )
-    db.add(team)
-    await db.commit()
-    await db.refresh(team)
-    
-    membership = TeamMember(
-        team_id=team.id,
-        user_id=UUID(current_user.user_id),
-        role="owner"
-    )
-    db.add(membership)
     await db.commit()
     
-    return {"id": str(team.id), "name": team.name, "description": team.description}
-
-
-@router.get("/teams", response_model=list[dict])
-async def list_user_teams(
-    current_user: TokenData = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    result = await db.execute(
-        select(TeamMember)
-        .options(selectinload(TeamMember.team))
-        .where(TeamMember.user_id == UUID(current_user.user_id))
+    await log_auth_event(
+        db, "logout", user_id=UUID(current_user.user_id), 
+        ip_address=request.client.host if request.client else None,
+        status="success"
     )
-    memberships = result.scalars().all()
-    return [
-        {
-            "id": str(m.team.id),
-            "name": m.team.name,
-            "description": m.team.description,
-            "role": m.role,
-            "joined_at": m.joined_at.isoformat() if m.joined_at else None
-        }
-        for m in memberships
-    ]
-
-
-@router.post("/teams/{team_id}/members")
-async def add_team_member(
-    team_id: UUID,
-    email: str,
-    role: str = "member",
-    current_user: TokenData = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    require_manager_or_admin(current_user)
     
-    result = await db.execute(
-        select(TeamMember).where(
-            TeamMember.team_id == team_id,
-            TeamMember.user_id == UUID(current_user.user_id)
-        )
-    )
-    membership = result.scalar_one_or_none()
-    if not membership or membership.role not in ("owner", "admin"):
-        raise HTTPException(status_code=403, detail="Not authorized to add members")
-    
-    user = await get_user_by_email(db, email)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    existing = await db.execute(
-        select(TeamMember).where(
-            TeamMember.team_id == team_id,
-            TeamMember.user_id == user.id
-        )
-    )
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="User is already a team member")
-    
-    new_member = TeamMember(
-        team_id=team_id,
-        user_id=user.id,
-        role=role
-    )
-    db.add(new_member)
-    await db.commit()
-    
-    return {"message": f"Added {email} to team with role {role}"}
-
-
-@router.get("/teams/{team_id}/projects", response_model=list[dict])
-async def list_team_projects(
-    team_id: UUID,
-    current_user: TokenData = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    result = await db.execute(
-        select(TeamMember).where(
-            TeamMember.team_id == team_id,
-            TeamMember.user_id == UUID(current_user.user_id)
-        )
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(status_code=403, detail="Not a team member")
-    
-    projects_result = await db.execute(
-        select(Project).where(Project.team_id == team_id)
-    )
-    projects = projects_result.scalars().all()
-    
-    return [
-        {
-            "id": str(p.id),
-            "project_name": p.project_name,
-            "status": p.status
-        }
-        for p in projects
-    ]
-
-
-@router.post("/password-reset-request", response_model=MessageResponse)
-async def request_password_reset(
-    request: PasswordResetRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    user = await get_user_by_email(db, request.email)
-    if not user:
-        return MessageResponse(message="If the email exists, a password reset link has been sent")
-    
-    reset_token = secrets.token_urlsafe(32)
-    expires = datetime.utcnow() + timedelta(hours=PASSWORD_RESET_TOKEN_EXPIRE_HOURS)
-    
-    user.password_reset_token = reset_token
-    user.password_reset_expires = expires
-    await db.commit()
-    
-    reset_url = f"https://prequal.example.com/reset-password?token={reset_token}"
-    logger.info(f"Password reset requested for {request.email}. Reset link: {reset_url}")
-    
-    return MessageResponse(message="If the email exists, a password reset link has been sent")
-
-
-class OrganizationCreate(BaseModel):
-    name: str
-    slug: Optional[str] = None
-
-
-class OrganizationResponse(BaseModel):
-    id: str
-    name: str
-    slug: str
-    created_at: Optional[datetime] = None
-
-
-class OrganizationUpdate(BaseModel):
-    name: Optional[str] = None
-    slug: Optional[str] = None
-
-
-@router.post("/organizations", response_model=OrganizationResponse)
-async def create_organization(
-    org_data: OrganizationCreate,
-    current_user: TokenData = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    slug = org_data.slug or org_data.name.lower().replace(" ", "-")
-    slug = re.sub(r'[^a-z0-9-]', '', slug)
-
-    existing_org = await db.execute(select(Organization).where(Organization.slug == slug))
-    if existing_org.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Organization slug already exists")
-
-    organization = Organization(name=org_data.name, slug=slug)
-    db.add(organization)
-    await db.commit()
-    await db.refresh(organization)
-
-    user = await get_user_by_id(db, UUID(current_user.user_id))
-    if user:
-        user.org_id = organization.id
-        await db.commit()
-
-    return OrganizationResponse(
-        id=str(organization.id),
-        name=organization.name,
-        slug=organization.slug,
-        created_at=organization.created_at
-    )
-
-
-@router.get("/organizations/me", response_model=OrganizationResponse)
-async def get_my_organization(
-    current_user: TokenData = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    user = await get_user_by_id(db, UUID(current_user.user_id))
-    if not user or not user.org_id:
-        raise HTTPException(status_code=404, detail="No organization found")
-
-    result = await db.execute(select(Organization).where(Organization.id == user.org_id))
-    org = result.scalar_one_or_none()
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
-    return OrganizationResponse(
-        id=str(org.id),
-        name=org.name,
-        slug=org.slug,
-        created_at=org.created_at
-    )
-
-
-@router.patch("/organizations/me", response_model=OrganizationResponse)
-async def update_my_organization(
-    org_data: OrganizationUpdate,
-    current_user: TokenData = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    user = await get_user_by_id(db, UUID(current_user.user_id))
-    if not user or not user.org_id:
-        raise HTTPException(status_code=404, detail="No organization found")
-
-    result = await db.execute(select(Organization).where(Organization.id == user.org_id))
-    org = result.scalar_one_or_none()
-    if not org:
-        raise HTTPException(status_code=404, detail="Organization not found")
-
-    if org_data.name is not None:
-        org.name = org_data.name
-    if org_data.slug is not None:
-        existing = await db.execute(select(Organization).where(Organization.slug == org_data.slug, Organization.id != org.id))
-        if existing.scalar_one_or_none():
-            raise HTTPException(status_code=400, detail="Organization slug already exists")
-        org.slug = org_data.slug
-
-    await db.commit()
-    await db.refresh(org)
-
-    return OrganizationResponse(
-        id=str(org.id),
-        name=org.name,
-        slug=org.slug,
-        created_at=org.created_at
-    )
-
-
-@router.get("/onboarding/status", response_model=dict)
-async def get_onboarding_status(
-    current_user: TokenData = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    user = await get_user_by_id(db, UUID(current_user.user_id))
-    has_org = user and user.org_id is not None
-
-    result = await db.execute(select(Project).where(Project.owner_id == user.id))
-    has_project = result.scalar_one_or_none() is not None
-
-    from app.models.compliance import Subcontractor
-    result = await db.execute(select(Subcontractor).limit(1))
-    has_subcontractor = result.scalar_one_or_none() is not None
-
-    return {
-        "has_organization": has_org,
-        "has_project": has_project,
-        "has_subcontractor": has_subcontractor,
-        "step": 1 if not has_org else 2 if not has_project else 3 if not has_subcontractor else 0
-    }
-
-
-@router.post("/password-reset/confirm", response_model=MessageResponse)
-async def confirm_password_reset(
-    request: PasswordResetConfirmRequest,
-    db: AsyncSession = Depends(get_db)
-):
-    result = await db.execute(
-        select(User).where(User.password_reset_token == request.token)
-    )
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
-    
-    if not user.password_reset_expires or user.password_reset_expires < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="Reset token has expired")
-    
-    user.hashed_password = get_password_hash(request.new_password)
-    user.password_reset_token = None
-    user.password_reset_expires = None
-    await db.commit()
-    
-    return MessageResponse(message="Password has been reset successfully")
+    return LogoutResponse(message="Successfully logged out")

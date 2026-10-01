@@ -31,11 +31,22 @@ class Subcontractor(Base):
     zip_code: Mapped[Optional[str]] = mapped_column(String(20))
     country: Mapped[str] = mapped_column(String(100), default="USA")
     ein: Mapped[Optional[str]] = mapped_column(String(20))
+    encrypted_ein: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    encrypted_contact_first_name: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    encrypted_contact_last_name: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    encrypted_email: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    encrypted_phone: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    encrypted_address_line1: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    encrypted_address_line2: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    encrypted_city: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    encrypted_state: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    encrypted_zip_code: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
     license_number: Mapped[Optional[str]] = mapped_column(String(100))
     license_state: Mapped[Optional[str]] = mapped_column(String(50))
     license_expiration: Mapped[Optional[date]] = mapped_column(Date)
     status: Mapped[str] = mapped_column(String(50), default="active")
     org_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True)
+    team_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("teams.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -48,6 +59,7 @@ class Subcontractor(Base):
         Index("idx_subcontractors_status", "status"),
         Index("idx_subcontractors_license_expiration", "license_expiration"),
         Index("idx_subcontractors_org_id", "org_id"),
+        Index("idx_subcontractors_team_id", "team_id"),
     )
 
 
@@ -60,6 +72,8 @@ class Project(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     client_name: Mapped[Optional[str]] = mapped_column(String(255))
     client_contact: Mapped[Optional[str]] = mapped_column(String(255))
+    encrypted_client_name: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
+    encrypted_client_contact: Mapped[Optional[str]] = mapped_column(String(700), nullable=True)
     start_date: Mapped[Optional[date]] = mapped_column(Date)
     estimated_end_date: Mapped[Optional[date]] = mapped_column(Date)
     actual_end_date: Mapped[Optional[date]] = mapped_column(Date)
@@ -551,4 +565,76 @@ class NotificationDeliveryLog(Base):
         Index("idx_notification_delivery_logs_created_at", "created_at"),
         Index("idx_notification_delivery_logs_provider", "provider"),
         Index("idx_notification_delivery_logs_queued_at", "queued_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Data Access Audit Logging (MID-434)
+# Owner: Data Engineer
+# Purpose: Structured audit logs for all read/write ops on customer data.
+# Complements the auth-focused audit_logs table with domain-specific
+# fields for data access analytics and compliance.
+# ---------------------------------------------------------------------------
+
+class DataAccessAuditLog(Base):
+    __tablename__ = "data_access_audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Who performed the action
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Operation details
+    operation_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    resource_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # Organization scope for multi-tenant queries
+    org_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Request context
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45))
+    user_agent: Mapped[Optional[str]] = mapped_column(String(500))
+    request_id: Mapped[Optional[str]] = mapped_column(String(255))
+    session_id: Mapped[Optional[str]] = mapped_column(String(255))
+
+    # Query and payload metadata
+    query_filter: Mapped[Optional[str]] = mapped_column(Text)
+    fields_accessed: Mapped[Optional[str]] = mapped_column(Text)
+    record_count: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Change tracking for writes
+    change_summary: Mapped[Optional[str]] = mapped_column(Text)
+    before_values: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    after_values: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # Outcome
+    status: Mapped[str] = mapped_column(String(20), default="success", nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Compliance / retention
+    compliance_tag: Mapped[Optional[str]] = mapped_column(String(100))
+    retention_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_data_access_audit_user_id", "user_id"),
+        Index("idx_data_access_audit_org_id", "org_id"),
+        Index("idx_data_access_audit_operation", "operation_type"),
+        Index("idx_data_access_audit_resource", "resource_type"),
+        Index("idx_data_access_audit_resource_id", "resource_id"),
+        Index("idx_data_access_audit_created_at", "created_at"),
+        Index("idx_data_access_audit_status", "status"),
+        Index("idx_data_access_audit_compliance_tag", "compliance_tag"),
+        # Composite indexes for common compliance query patterns
+        Index("idx_data_access_audit_user_op", "user_id", "operation_type"),
+        Index("idx_data_access_audit_resource_created", "resource_type", "created_at"),
+        Index("idx_data_access_audit_org_created", "org_id", "created_at"),
+        Index("idx_data_access_audit_compliance_created", "compliance_tag", "created_at"),
     )

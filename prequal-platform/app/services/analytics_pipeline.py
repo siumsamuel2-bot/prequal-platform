@@ -410,6 +410,147 @@ async def get_all_project_compliance(db: AsyncSession, limit: int = 500, offset:
 
 
 # ---------------------------------------------------------------------------
+# Feature Adoption (GET /api/analytics/feature-adoption)
+# ---------------------------------------------------------------------------
+
+async def get_feature_adoption_summary(
+    db: AsyncSession,
+    *,
+    feature_name: Optional[str] = None,
+    days: int = 90,
+    limit: int = 500,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    """Return daily feature adoption aggregates from mv_feature_adoption_summary."""
+    params: dict[str, Any] = {"limit": limit, "offset": offset, "days": days}
+    filters = ["event_date >= CURRENT_DATE - INTERVAL ':days days'"]
+
+    if feature_name:
+        filters.append("feature_name = :feature_name")
+        params["feature_name"] = feature_name
+
+    where_clause = " AND ".join(filters)
+
+    result = await db.execute(
+        text(
+            f"""
+            SELECT
+                feature_name,
+                event_date,
+                total_events,
+                unique_users,
+                view_count,
+                action_count,
+                export_count,
+                computed_at
+            FROM mv_feature_adoption_summary
+            WHERE {where_clause}
+            ORDER BY event_date DESC, total_events DESC
+            LIMIT :limit OFFSET :offset
+            """
+        ),
+        params,
+    )
+    rows = result.mappings().all()
+    return [
+        {
+            "feature_name": row["feature_name"],
+            "event_date": _to_iso(row["event_date"]),
+            "total_events": row["total_events"],
+            "unique_users": row["unique_users"],
+            "view_count": row["view_count"],
+            "action_count": row["action_count"],
+            "export_count": row["export_count"],
+            "computed_at": _to_iso(row["computed_at"]),
+        }
+        for row in rows
+    ]
+
+
+async def get_feature_adoption_summary_count(
+    db: AsyncSession,
+    *,
+    feature_name: Optional[str] = None,
+    days: int = 90,
+) -> int:
+    """Return total count of feature adoption rows for pagination."""
+    params: dict[str, Any] = {"days": days}
+    filters = ["event_date >= CURRENT_DATE - INTERVAL ':days days'"]
+
+    if feature_name:
+        filters.append("feature_name = :feature_name")
+        params["feature_name"] = feature_name
+
+    where_clause = " AND ".join(filters)
+
+    result = await db.execute(
+        text(f"SELECT COUNT(*) FROM mv_feature_adoption_summary WHERE {where_clause}"),
+        params,
+    )
+    return result.scalar() or 0
+
+
+# ---------------------------------------------------------------------------
+# System Health (GET /api/analytics/system-health)
+# ---------------------------------------------------------------------------
+
+async def get_system_health_summary(
+    db: AsyncSession,
+    *,
+    service_name: Optional[str] = None,
+    metric_name: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Return system health aggregates from mv_system_health_summary."""
+    params: dict[str, Any] = {}
+    filters = ["1=1"]
+
+    if service_name:
+        filters.append("service_name = :service_name")
+        params["service_name"] = service_name
+    if metric_name:
+        filters.append("metric_name = :metric_name")
+        params["metric_name"] = metric_name
+
+    where_clause = " AND ".join(filters)
+
+    result = await db.execute(
+        text(
+            f"""
+            SELECT
+                service_name,
+                metric_name,
+                metric_unit,
+                avg_value,
+                min_value,
+                max_value,
+                p95_value,
+                total_count,
+                computed_at
+            FROM mv_system_health_summary
+            WHERE {where_clause}
+            ORDER BY service_name, metric_name
+            """
+        ),
+        params,
+    )
+    rows = result.mappings().all()
+    return [
+        {
+            "service_name": row["service_name"],
+            "metric_name": row["metric_name"],
+            "metric_unit": row["metric_unit"],
+            "avg_value": round(float(row["avg_value"] or 0), 4),
+            "min_value": round(float(row["min_value"] or 0), 4),
+            "max_value": round(float(row["max_value"] or 0), 4),
+            "p95_value": round(float(row["p95_value"] or 0), 4),
+            "total_count": row["total_count"],
+            "computed_at": _to_iso(row["computed_at"]),
+        }
+        for row in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

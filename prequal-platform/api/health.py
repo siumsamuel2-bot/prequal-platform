@@ -15,10 +15,29 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Approximate process start time, used for the uptime metric in /health/detailed
+PROCESS_START_TIME = time.time()
+
+
+async def _check_database() -> bool:
+    """Run a lightweight connectivity check against the primary database."""
+    from sqlalchemy import text
+
+    from app.database import engine
+
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return True
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        return False
 
 
 class HealthStatus(BaseModel):
@@ -79,33 +98,14 @@ async def readiness_probe():
     checks = {}
     all_healthy = True
 
-    # Check database connection
-    try:
-        from app.database import get_db_session
-        # Try to get a connection
-        db_healthy = True  # Simplified - actual implementation would test connection
-        checks["database"] = db_healthy
-        if not db_healthy:
-            all_healthy = False
-    except Exception as e:
-        logger.error(f"Database health check failed: {e}")
-        checks["database"] = False
+    # Check database connectivity with a real query
+    checks["database"] = await _check_database()
+    if not checks["database"]:
         all_healthy = False
 
-    # Check Redis connection
-    try:
-        import os
-        redis_url = os.getenv("REDIS_URL")
-        if redis_url:
-            # Simplified Redis check
-            checks["redis"] = True
-        else:
-            checks["redis"] = True  # Optional
-    except Exception as e:
-        logger.error(f"Redis health check failed: {e}")
-        checks["redis"] = False
-        # Redis might be optional
-        pass
+    # Redis is an optional dependency (no Python client bundled);
+    # a missing REDIS_URL must not fail readiness.
+    checks["redis"] = True
 
     status = "ready" if all_healthy else "not_ready"
     status_code = 200 if all_healthy else 503
@@ -128,8 +128,8 @@ async def detailed_health():
     Returns comprehensive health information including:
     - Application version
     - All dependency statuses
-    - Resource usage (if available)
-    - Recent error count
+    - Process uptime
+    - Python version
     """
     import os
     import sys
@@ -140,28 +140,18 @@ async def detailed_health():
     # Collect all checks
     services = {}
 
-    # Database
-    try:
-        # Simplified DB check
-        services["database"] = "healthy"
-    except Exception:
-        services["database"] = "unhealthy"
+    # Database connectivity (real query)
+    services["database"] = "healthy" if await _check_database() else "unhealthy"
 
-    # Redis
-    try:
-        services["redis"] = "healthy"
-    except Exception:
-        services["redis"] = "unknown"
+    # Redis is optional; report configuration presence only
+    services["redis"] = "configured" if os.getenv("REDIS_URL") else "not_configured"
 
     # External APIs
-    try:
-        osha_key = os.getenv("OSHA_API_KEY")
-        services["osha_api"] = "healthy" if osha_key else "not_configured"
-    except Exception:
-        services["osha_api"] = "unhealthy"
+    osha_key = os.getenv("OSHA_API_KEY")
+    services["osha_api"] = "healthy" if osha_key else "not_configured"
 
     overall_status = "healthy" if all(
-        v in ["healthy", "not_configured"] for v in services.values()
+        v in ["healthy", "not_configured", "configured"] for v in services.values()
     ) else "degraded"
 
     return {
@@ -169,6 +159,6 @@ async def detailed_health():
         "version": version,
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "services": services,
-        "uptime_seconds": None,  # Would track startup time
+        "uptime_seconds": round(time.time() - PROCESS_START_TIME, 1),
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     }

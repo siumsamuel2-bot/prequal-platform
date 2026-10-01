@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, date
 from typing import Optional, List
 from uuid import UUID
@@ -87,6 +88,15 @@ class CertificationBase(BaseModel):
 
 class CertificationCreate(CertificationBase):
     subcontractor_id: UUID
+
+
+class SubcontractorCertificationCreate(CertificationBase):
+    """Create a certification nested under a subcontractor.
+
+    The subcontractor comes from the path parameter, so the body does not
+    carry ``subcontractor_id``.
+    """
+    pass
 
 
 class CertificationUpdate(BaseModel):
@@ -424,6 +434,7 @@ class CertificationRenewalResponse(CertificationRenewalBase):
 class ComplianceStatusResponse(BaseModel):
     subcontractor_id: UUID
     company_name: str
+    state: Optional[str] = None
     compliance_score: float
     status: str
     active_certifications: int
@@ -539,6 +550,7 @@ class RecentAlert(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    refresh_token: Optional[str] = None
 
 
 class TokenData(BaseModel):
@@ -546,6 +558,8 @@ class TokenData(BaseModel):
     user_id: Optional[str] = None
     role: Optional[str] = "viewer"
     team_id: Optional[str] = None
+    name: Optional[str] = None
+    email: Optional[str] = None
 
 
 class UserBase(BaseModel):
@@ -573,6 +587,21 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     name: str
+
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one digit')
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', v):
+            raise ValueError('Password must contain at least one special character')
+        return v
 
 
 class UserWithTeams(BaseModel):

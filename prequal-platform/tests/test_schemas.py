@@ -187,8 +187,9 @@ class TestTokenSchemas:
     def test_register_request(self):
         data = {
             "email": "test@example.com",
-            "password": "password123",
+            "password": "Password123!",
             "name": "Test User"
         }
         register = RegisterRequest(**data)
         assert register.email == "test@example.com"
+        assert register.password == "Password123!"

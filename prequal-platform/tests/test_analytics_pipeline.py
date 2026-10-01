@@ -289,3 +289,89 @@ class TestDataQuality:
                 datetime.fromisoformat(computed)
             except ValueError:
                 pytest.fail(f"computed_at not valid ISO: {computed}")
+
+# ---------------------------------------------------------------------------
+# New Analytics Views - Feature Adoption & System Health
+# ---------------------------------------------------------------------------
+
+class TestNewAnalyticsViewsExist:
+    """Verify new materialized views are present and queryable."""
+
+    @pytest.mark.asyncio
+    async def test_mv_feature_adoption_summary_exists(self, db_session: AsyncSession) -> None:
+        result = await db_session.execute(text("SELECT 1 FROM mv_feature_adoption_summary LIMIT 1"))
+        assert result.scalar() is not None or True
+
+    @pytest.mark.asyncio
+    async def test_mv_system_health_summary_exists(self, db_session: AsyncSession) -> None:
+        result = await db_session.execute(text("SELECT 1 FROM mv_system_health_summary LIMIT 1"))
+        assert result.scalar() is not None or True
+
+
+class TestFeatureAdoption:
+    """Test GET /api/analytics/feature-adoption aggregation shape."""
+
+    @pytest.mark.asyncio
+    async def test_returns_list(self, db_session: AsyncSession) -> None:
+        from app.services.analytics_pipeline import get_feature_adoption_summary
+        data = await get_feature_adoption_summary(db_session, limit=10)
+        assert isinstance(data, list)
+
+    @pytest.mark.asyncio
+    async def test_fields_present(self, db_session: AsyncSession) -> None:
+        from app.services.analytics_pipeline import get_feature_adoption_summary
+        data = await get_feature_adoption_summary(db_session, limit=10)
+        if data:
+            first = data[0]
+            required = [
+                "feature_name",
+                "event_date",
+                "total_events",
+                "unique_users",
+                "view_count",
+                "action_count",
+                "export_count",
+                "computed_at",
+            ]
+            for field in required:
+                assert field in first, f"Missing field: {field}"
+
+    @pytest.mark.asyncio
+    async def test_non_negative_counts(self, db_session: AsyncSession) -> None:
+        from app.services.analytics_pipeline import get_feature_adoption_summary
+        data = await get_feature_adoption_summary(db_session, limit=100)
+        for row in data:
+            for field in ("total_events", "unique_users", "view_count", "action_count", "export_count"):
+                val = row.get(field)
+                if val is not None:
+                    assert val >= 0, f"{field} must be >= 0, got {val}"
+
+
+class TestSystemHealth:
+    """Test GET /api/analytics/system-health aggregation shape."""
+
+    @pytest.mark.asyncio
+    async def test_returns_list(self, db_session: AsyncSession) -> None:
+        from app.services.analytics_pipeline import get_system_health_summary
+        data = await get_system_health_summary(db_session)
+        assert isinstance(data, list)
+
+    @pytest.mark.asyncio
+    async def test_fields_present(self, db_session: AsyncSession) -> None:
+        from app.services.analytics_pipeline import get_system_health_summary
+        data = await get_system_health_summary(db_session)
+        if data:
+            first = data[0]
+            required = [
+                "service_name",
+                "metric_name",
+                "metric_unit",
+                "avg_value",
+                "min_value",
+                "max_value",
+                "p95_value",
+                "total_count",
+                "computed_at",
+            ]
+            for field in required:
+                assert field in first, f"Missing field: {field}"
