@@ -1,0 +1,275 @@
+name: Analytics Service CI/CD
+
+on:
+  push:
+    branches: [ main, develop, master ]
+    tags: [ 'v*' ]
+    paths: [ 'analytics-service/**', '.github/workflows/analytics-service.yml' ]
+  pull_request:
+    branches: [ main, develop, master ]
+    paths: [ 'analytics-service/**', '.github/workflows/analytics-service.yml' ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: analytics-service
+  ECS_CLUSTER: prequal-cluster
+  ECS_SERVICE: analytics-service
+  ECS_TASK_DEFINITION: analytics-service-task
+  CONTAINER_NAME: analytics-service
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        working-directory: analytics-service
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov
+
+      - name: Run tests with coverage
+        working-directory: analytics-service
+        env:
+          DATABASE_URL: sqlite:///./test_analytics.db
+          REDIS_URL: redis://localhost:6379/1
+          SERVICE_API_KEY: ci-test-service-key-not-for-production
+          ENVIRONMENT: test
+        run: pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: analytics-coverage-report
+          path: analytics-service/coverage.xml
+          retention-days: 7
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      image_uri: ${{ steps.ecr.outputs.image_uri }}
+      image_tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate semantic version
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then
+            TAG=${GITHUB_REF#refs/tags/v}
+          else
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            TIMESTAMP=$(date +%Y%m%d%H%M%S)
+            TAG="1.0.0-dev.${TIMESTAMP}+${SHORT_SHA}"
+          fi
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./analytics-service
+          file: ./analytics-service/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Output image URI
+        id: ecr
+        run: |
+          echo "image_uri=${{ steps.login-ecr.outputs.registry }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY }}:${{ steps.version.outputs.tag }}" >> $GITHUB_OUTPUT
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.ecr.outputs.image_uri }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  deploy-staging:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' || github.event.inputs.environment == 'staging'
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }}-staging --query taskDefinition > task-definition.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build.outputs.image_uri }}
+
+      - name: Deploy to ECS with rolling update
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}-staging
+          cluster: ${{ env.ECS_CLUSTER }}-staging
+          wait-for-service-stability: true
+
+      - name: Health check
+        run: |
+          sleep 15
+          curl -f -s https://staging.prequal.yourcompany.com/analytics/health || exit 1
+
+      - name: Notify success
+        if: success()
+        run: echo "✅ Analytics service staging deployment completed (version ${{ needs.build.outputs.image_tag }})"
+
+  deploy-production:
+    needs: [build, deploy-staging]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download task definition
+        run: |
+          aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_DEFINITION }} --query taskDefinition > task-definition.json
+
+      - name: Update task definition with new image
+        id: task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build.outputs.image_uri }}
+
+      - name: Deploy to ECS with rolling update
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          codedeploy-appspec: 'analytics-service/appspec.yaml'
+          codedeploy-application: analytics-service-production
+          codedeploy-deployment-group: analytics-production-deployment-group
+
+      - name: Wait for deployment to settle
+        run: sleep 30
+
+      - name: Health check
+        run: |
+          curl -f -s https://prequal.yourcompany.com/analytics/health || exit 1
+
+      - name: Notify success
+        if: success()
+        run: echo "✅ Analytics service production deployment completed (version ${{ needs.build.outputs.image_tag }})"
+
+      - name: Notify failure
+        if: failure()
+        run: echo "❌ Analytics service production deployment failed - check CloudWatch logs"
+
+  rollback:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.rollback == 'true'
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get previous task definition
+        id: previous
+        run: |
+          if [ "${{ github.event.inputs.environment }}" == "production" ]; then
+            TASK_DEF="${{ env.ECS_TASK_DEFINITION }}"
+            SERVICE="${{ env.ECS_SERVICE }}"
+            CLUSTER="${{ env.ECS_CLUSTER }}"
+          else
+            TASK_DEF="${{ env.ECS_TASK_DEFINITION }}-staging"
+            SERVICE="${{ env.ECS_SERVICE }}-staging"
+            CLUSTER="${{ env.ECS_CLUSTER }}-staging"
+          fi
+          PREVIOUS_TASK_DEF_ARN=$(aws ecs list-task-definitions --family-prefix $TASK_DEF --sort DESC --max-results 2 --query 'taskDefinitionArns[1]' --output text)
+          echo "Rolling back to: $PREVIOUS_TASK_DEF_ARN"
+          echo "task_def_arn=$PREVIOUS_TASK_DEF_ARN" >> $GITHUB_OUTPUT
+          echo "service=$SERVICE" >> $GITHUB_OUTPUT
+          echo "cluster=$CLUSTER" >> $GITHUB_OUTPUT
+
+      - name: Deploy previous version
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.previous.outputs.task_def_arn }}
+          service: ${{ steps.previous.outputs.service }}
+          cluster: ${{ steps.previous.outputs.cluster }}
+          wait-for-service-stability: true
+
+      - name: Verify rollback
+        run: |
+          sleep 30
+          if [ "${{ github.event.inputs.environment }}" == "production" ]; then
+            curl -f -s https://prequal.yourcompany.com/analytics/health || exit 1
+          else
+            curl -f -s https://staging.prequal.yourcompany.com/analytics/health || exit 1
+          fi
+          echo "✅ Rollback completed successfully"

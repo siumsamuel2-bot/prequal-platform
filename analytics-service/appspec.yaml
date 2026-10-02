@@ -1,0 +1,31 @@
+version: 0.0
+Resources:
+  - TargetService:
+      Type: AWS::ECS::Service
+      Properties:
+        TaskDefinition: "<TASK_DEFINITION>"
+        LoadBalancerInfo:
+          ContainerName: "analytics-service"
+          ContainerPort: 8006
+        PlatformVersion: "1.4.0"
+        NetworkConfiguration:
+          AwsVpcConfiguration:
+            Subnets:
+              - "<SUBNET_1>"
+              - "<SUBNET_2>"
+            SecurityGroups:
+              - "<SECURITY_GROUP>"
+            AssignPublicIp: "DISABLED"
+        CapacityProviderStrategy:
+          - CapacityProvider: "FARGATE"
+            Weight: 1
+            Base: 1
+          - CapacityProvider: "FARGATE_SPOT"
+            Weight: 0
+            Base: 0
+      Hooks:
+        - BeforeInstall: "BeforeInstall"
+        - AfterInstall: "AfterInstall"
+        - AfterAllowTestTraffic: "AfterAllowTestTraffic"
+        - BeforeAllowTraffic: "BeforeAllowTraffic"
+        - AfterAllowTraffic: "AfterAllowTraffic"

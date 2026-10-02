@@ -32,3 +32,21 @@ variable "aws_account_id" {
   description = "AWS account ID"
   type        = string
 }
+
+variable "domain_name" {
+  description = "Domain name for the application (e.g., prequal.example.com)"
+  type        = string
+  default     = ""
+}
+
+variable "alert_email" {
+  description = "Email address for production alerts"
+  type        = string
+  default     = ""
+}
+
+variable "analytics_db_password" {
+  description = "Password for the analytics service RDS PostgreSQL database"
+  type        = string
+  sensitive   = true
+}
