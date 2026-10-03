@@ -1,0 +1,52 @@
+name: Heartbeat Health Monitor
+
+on:
+  schedule:
+    # Run every 15 minutes to detect silent heartbeats quickly
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  monitor-heartbeats:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run heartbeat health check
+        env:
+          PAPERCLIP_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
+          PAPERCLIP_API_KEY: ${{ secrets.PAPERCLIP_API_KEY }}
+          PAPERCLIP_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
+          PAPERCLIP_RUN_ID: ${{ github.run_id }}
+        shell: pwsh
+        run: |
+          .\scripts\monitor-heartbeat-health.ps1 -SilentThresholdMinutes 60
+
+      - name: Run runtime adapter health check
+        env:
+          PAPERCLIP_API_URL: ${{ secrets.PAPERCLIP_API_URL }}
+          PAPERCLIP_API_KEY: ${{ secrets.PAPERCLIP_API_KEY }}
+          PAPERCLIP_COMPANY_ID: ${{ secrets.PAPERCLIP_COMPANY_ID }}
+          PAPERCLIP_RUN_ID: ${{ github.run_id }}
+        shell: pwsh
+        run: |
+          .\scripts\check-runtime-adapter-health.ps1 -OutputLogPath "$env:RUNNER_TEMP\adapter-health.log" -AlertOutputDir "artifacts\adapter-health"
+
+      - name: Upload alert artifacts if found
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: heartbeat-alerts
+          path: C:\Users\siums\AppData\Local\Temp\opencode\heartbeat-alert-*.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload runtime adapter alert artifacts if found
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-adapter-alerts
+          path: artifacts/adapter-health/adapter-health-*.json
+          retention-days: 7
+          if-no-files-found: ignore
