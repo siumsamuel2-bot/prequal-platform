@@ -85,6 +85,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
 
+      - name: Run standalone hardcoded-secret scanner
+        run: python3 scripts/scan_secrets.py
+
       - name: Upload gitleaks SARIF report
         uses: github/codeql-action/upload-sarif@v2
         if: always()
@@ -286,6 +289,69 @@ jobs:
 
       - name: Type check
         run: npm run typecheck
+
+  # Backend pytest suite against real PostgreSQL (MID-628)
+  # Closes the SQLite-shim parity gap: PG-only behavior (upserts, concurrency,
+  # REFRESH MATERIALIZED VIEW CONCURRENTLY) is untested under SQLite.
+  # TEST_DATABASE_URL switches tests/conftest.py into Postgres parity mode
+  # (real Alembic migrations instead of SQLite shims).
+  # Advisory until PG parity is reached: failures are visible here and in the
+  # artifact summary but do not block builds. Remove continue-on-error once
+  # the suite is green against PostgreSQL.
+  test-postgres:
+    needs: [secrets-scan, security-lint, python-lint, dependency-check]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd prequal-platform
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov pytest-mock
+
+      - name: Run backend tests against PostgreSQL
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+        run: |
+          cd prequal-platform
+          pytest tests/ -v --cov=app --cov=api --junitxml=pg-test-results.xml
+
+      - name: Report PG suite results
+        if: always()
+        run: |
+          cd prequal-platform
+          python -c "import xml.etree.ElementTree as ET, sys; root = ET.parse('pg-test-results.xml').getroot(); total = int(root.get('tests', 0)); failures = int(root.get('failures', 0)); errors = int(root.get('errors', 0)); skipped = int(root.get('skipped', 0)); print(f'PG suite: {total - failures - errors - skipped}/{total} passed, {failures} failures, {errors} errors, {skipped} skipped'); sys.exit(0)"
+
+      - name: Upload PG test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pg-test-results
+          path: prequal-platform/pg-test-results.xml
+          retention-days: 7
 
   # Integration tests for compliance and analytics pipelines
   integration-tests:

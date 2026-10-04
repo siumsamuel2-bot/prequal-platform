@@ -7,10 +7,19 @@ import os
 
 import uuid
 
-# Use a file-based SQLite with a unique path per test session so that
-# parallel or overlapping runs do not collide on the same file.
+# PostgreSQL parity mode (MID-628): when TEST_DATABASE_URL points at a real
+# PostgreSQL instance, the whole suite runs against it with the real Alembic
+# migrations (no SQLite shims). Default remains a file-based SQLite with a
+# unique path per test session so parallel or overlapping runs do not collide.
 _test_db_path = os.path.join(os.path.dirname(__file__), "..", f"test_prequal_{uuid.uuid4().hex}.db")
-os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_test_db_path}"
+_pg_test_url = os.environ.get("TEST_DATABASE_URL", "")
+_use_postgres = _pg_test_url.startswith("postgresql")
+if _use_postgres:
+    os.environ["DATABASE_URL"] = _pg_test_url
+else:
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_test_db_path}"
+# Ensure the auth module can import during tests even without an ambient secret.
+os.environ.setdefault("SECRET_KEY", "test-secret-key-32-bytes-long-here")
 
 import pytest_asyncio  # noqa: E402
 import pytest  # noqa: E402
@@ -40,29 +49,58 @@ def _compile_pg_uuid_sqlite(type_, compiler, **kw):
 @pytest_asyncio.fixture(scope="session")
 async def db_engine():
     """Create an async engine and initialize all tables."""
-    # Clean up any stale test DB from a previous run
-    if os.path.exists(_test_db_path):
-        try:
-            os.remove(_test_db_path)
-        except PermissionError:
-            pass  # Windows may hold the file; create_all below is idempotent
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        # Analytics materialized views are PostgreSQL-only; create regular
-        # views in SQLite so pipeline tests can execute.
-        await _create_analytics_views_sqlite(conn)
-        # Data quality monitoring tables are Alembic-only; create them for
-        # test compatibility when running under SQLite.
-        await _create_data_quality_monitoring_tables_sqlite(conn)
+    if _use_postgres:
+        # PostgreSQL parity mode: apply the real Alembic migrations so
+        # materialized views and Alembic-only tables exist exactly as in
+        # production. SQLite shims are not used in this mode.
+        _run_alembic_migrations("head")
+    else:
+        # Clean up any stale test DB from a previous run
+        if os.path.exists(_test_db_path):
+            try:
+                os.remove(_test_db_path)
+            except PermissionError:
+                pass  # Windows may hold the file; create_all below is idempotent
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            # Analytics materialized views are PostgreSQL-only; create regular
+            # views in SQLite so pipeline tests can execute.
+            await _create_analytics_views_sqlite(conn)
+            # Data quality monitoring tables are Alembic-only; create them for
+            # test compatibility when running under SQLite.
+            await _create_data_quality_monitoring_tables_sqlite(conn)
     yield engine
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-    await engine.dispose()
-    if os.path.exists(_test_db_path):
+    if _use_postgres:
+        # Best-effort teardown of the disposable test database
         try:
-            os.remove(_test_db_path)
-        except PermissionError:
-            pass  # Windows may hold the file; let temp cleanup handle it
+            _run_alembic_migrations("base")
+        except Exception:  # noqa: BLE001 - teardown must not fail the suite
+            pass
+    else:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        if os.path.exists(_test_db_path):
+            try:
+                os.remove(_test_db_path)
+            except PermissionError:
+                pass  # Windows may hold the file; let temp cleanup handle it
+    await engine.dispose()
+
+
+def _run_alembic_migrations(revision: str) -> None:
+    """Run Alembic migrations against the PostgreSQL test database.
+
+    Alembic requires a sync driver, so the asyncpg URL from TEST_DATABASE_URL
+    is rewritten to psycopg2 (present in requirements.txt). alembic.ini's
+    ``script_location = %(here)s/alembic`` resolves the migrations directory.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
+    cfg.set_main_option("script_location", os.path.join(os.path.dirname(__file__), "..", "alembic"))
+    cfg.set_main_option("sqlalchemy.url", _pg_test_url.replace("+asyncpg", "+psycopg2"))
+    command.upgrade(cfg, revision)
 
 
 async def _create_data_quality_monitoring_tables_sqlite(conn):
@@ -161,6 +199,35 @@ async def _create_data_quality_monitoring_tables_sqlite(conn):
             executed_at TEXT,
             archived_at TEXT DEFAULT CURRENT_TIMESTAMP,
             archive_reason TEXT DEFAULT 'retention'
+        )
+        """
+    ))
+
+    # data_quality_field_metrics (migration 027, MID-605)
+    await conn.execute(text(
+        """
+        CREATE TABLE IF NOT EXISTS data_quality_field_metrics (
+            id TEXT PRIMARY KEY,
+            captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            table_name TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            total_rows INTEGER NOT NULL DEFAULT 0,
+            null_count INTEGER NOT NULL DEFAULT 0,
+            null_rate REAL,
+            duplicate_count INTEGER NOT NULL DEFAULT 0,
+            duplicate_rate REAL
+        )
+        """
+    ))
+
+    # data_quality_schema_snapshots (migration 027, MID-605)
+    await conn.execute(text(
+        """
+        CREATE TABLE IF NOT EXISTS data_quality_schema_snapshots (
+            id TEXT PRIMARY KEY,
+            table_name TEXT NOT NULL,
+            columns_json TEXT NOT NULL,
+            captured_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
     ))
@@ -329,6 +396,39 @@ async def _create_analytics_views_sqlite(conn):
     with the same column layout for test compatibility.
     """
     from sqlalchemy import text
+    # mv_feature_adoption_summary
+    await conn.execute(text(
+        """
+        CREATE VIEW IF NOT EXISTS mv_feature_adoption_summary AS
+        SELECT
+            'feature_a' AS feature_name,
+            date('now', '-1 days') AS event_date,
+            0 AS total_events,
+            0 AS unique_users,
+            0 AS view_count,
+            0 AS action_count,
+            0 AS export_count,
+            datetime('now') AS computed_at
+        FROM users LIMIT 1
+        """
+    ))
+    # mv_system_health_summary
+    await conn.execute(text(
+        """
+        CREATE VIEW IF NOT EXISTS mv_system_health_summary AS
+        SELECT
+            'service_1' AS service_name,
+            'metric_a' AS metric_name,
+            'count' AS metric_unit,
+            0 AS avg_value,
+            0 AS min_value,
+            0 AS max_value,
+            0 AS p95_value,
+            0 AS total_count,
+            datetime('now') AS computed_at
+        FROM users LIMIT 1
+        """
+    ))
     # mv_compliance_summary
     await conn.execute(text(
         """
@@ -506,3 +606,20 @@ async def async_client(db_engine):
     transport = ASGITransport(app=fastapi_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def reset_rate_limiter():
+    """Reset the app rate-limit storage so cross-suite runs don't hit 429.
+
+    The limiter state lives in a module-global MemoryStorage instance keyed by
+    client IP; without a per-test reset, suites that issue >20 requests/min
+    accumulate hits and fail with spurious 429s.
+    """
+    try:
+        from app.middleware.rate_limit import _rate_storage  # noqa: WPS433
+
+        _rate_storage._strategy.storage.reset()
+    except Exception:  # noqa: BLE001 - test isolation must not fail the suite
+        pass
+    yield
