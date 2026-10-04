@@ -55,12 +55,12 @@ jobs:
           terraform_version: 1.5.0
       
       - name: Terraform Format Check
-        run: terraform fmt -check -recursive infrastructure/
+        run: terraform fmt -check -recursive terraform/
         continue-on-error: true
       
       - name: Terraform Validate
         run: |
-          cd infrastructure
+          cd terraform
           terraform init -backend=false
           terraform validate
 
@@ -205,19 +205,19 @@ jobs:
       
       - name: Terraform Init
         run: |
-          cd infrastructure
+          cd terraform
           terraform init
       
       - name: Terraform Plan
         run: |
-          cd infrastructure
+          cd terraform
           terraform plan -out=tfplan
         env:
           TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
       
       - name: Terraform Apply
         run: |
-          cd infrastructure
+          cd terraform
           terraform apply -auto-approve tfplan
         env:
           TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}

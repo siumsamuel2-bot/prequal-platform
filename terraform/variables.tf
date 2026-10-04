@@ -50,3 +50,15 @@ variable "analytics_db_password" {
   type        = string
   sensitive   = true
 }
+
+variable "staging_domain_name" {
+  description = "Domain name for the staging environment (e.g., staging.prequal.example.com)"
+  type        = string
+  default     = "staging.prequal.yourcompany.com"
+}
+
+variable "staging_desired_count" {
+  description = "Desired task count for staging ECS services"
+  type        = number
+  default     = 1
+}
