@@ -182,7 +182,7 @@ export const authApi = {
     apiClient.post<{ secret: string; otpauth_url: string }>('/auth/mfa/enable', { password }),
 
   verifyMFA: (token: string) =>
-    apiClient.post<{ message: string }>('/auth/mfa/verify', { token }),
+    apiClient.post<{ message: string; backup_codes?: string[] }>('/auth/mfa/verify', { token }),
 
   disableMFA: (password: string, mfa_token: string) =>
     apiClient.post<{ message: string }>('/auth/mfa/disable', { password, mfa_token }),
@@ -536,7 +536,7 @@ export interface ComplianceSummaryData {
 export interface PilotEngagementData {
   total_organizations: number;
   active_organizations_30d: number;
-  total_users: number;
+  total_users: number | null;
   active_users_30d: number;
   avg_events_per_org: number;
   onboarding_completion_rate: number;
@@ -553,18 +553,97 @@ export interface PilotEngagementData {
   }>;
 }
 
+export interface DailyActiveUserData {
+  day: string;
+  active_users: number;
+}
+
+export interface AnalyticsEventRecord {
+  id: string;
+  event_type: string;
+  user_id: string | null;
+  organization_id: number | string | null;
+  metadata: Record<string, unknown> | null;
+  source_service: string | null;
+  created_at: string;
+}
+
+export interface AnomalyRecord {
+  type: string;
+  severity: string;
+  feature: string;
+  message: string;
+  detected_at: string;
+  metric_value: number | null;
+  expected_range: string | null;
+}
+
+export interface AnomaliesResponse {
+  anomalies: AnomalyRecord[];
+  total: number;
+}
+
+export interface WeeklyReportAlert {
+  type: string;
+  feature: string;
+  message: string;
+}
+
+export interface WeeklyReportData {
+  period: string;
+  generated_at: string;
+  feature_adoption: FeatureAdoptionData[];
+  system_health: SystemHealthData[];
+  alerts: WeeklyReportAlert[];
+}
+
+export interface AnalyticsEventFilters {
+  organization_id?: string;
+  event_type?: string;
+  days?: number;
+  skip?: number;
+  limit?: number;
+}
+
 export const analyticsApi = {
   getFeatureAdoption: (params?: { feature_name?: string; days?: number; limit?: number; skip?: number }) =>
     apiClient.get<FeatureAdoptionData[]>('/analytics/feature-adoption', params?.limit || params?.skip ? { params: { ...(params.feature_name && { feature_name: params.feature_name }), ...(params.days && { days: String(params.days) }), ...(params.limit && { limit: String(params.limit) }), ...(params.skip && { skip: String(params.skip) }) } } : undefined),
 
-  getSystemHealth: (params?: { service_name?: string; metric_name?: string }) =>
-    apiClient.get<SystemHealthData[]>('/analytics/system-health', params?.service_name || params?.metric_name ? { params: { ...(params.service_name && { service_name: params.service_name }), ...(params.metric_name && { metric_name: params.metric_name }) } } : undefined),
+  getSystemHealth: (params?: { service_name?: string; metric_name?: string; hours?: number }) =>
+    apiClient.get<SystemHealthData[]>('/analytics/system-health', params?.service_name || params?.metric_name || params?.hours ? { params: { ...(params.service_name && { service_name: params.service_name }), ...(params.metric_name && { metric_name: params.metric_name }), ...(params.hours && { hours: String(params.hours) }) } } : undefined),
 
   getPerformanceMetrics: () =>
     apiClient.get<PerformanceMetricsData>('/analytics/performance'),
 
   getPilotEngagement: (days?: number) =>
     apiClient.get<PilotEngagementData>(`/analytics/pilot-engagement${days ? `?days=${days}` : ''}`),
+
+  getDailyActiveUsers: (days?: number) =>
+    apiClient.get<DailyActiveUserData[]>(`/analytics/daily-active-users${days ? `?days=${days}` : ''}`),
+
+  getEvents: (filters: AnalyticsEventFilters = {}) => {
+    const params: Record<string, string> = {};
+    if (filters.organization_id) params.organization_id = filters.organization_id;
+    if (filters.event_type) params.event_type = filters.event_type;
+    if (filters.days !== undefined) params.days = String(filters.days);
+    if (filters.skip !== undefined) params.skip = String(filters.skip);
+    if (filters.limit !== undefined) params.limit = String(filters.limit);
+    const hasParams = Object.keys(params).length > 0;
+    return apiClient.get<AnalyticsEventRecord[]>('/analytics/events', hasParams ? { params } : undefined);
+  },
+
+  getAnomalies: () =>
+    apiClient.get<AnomaliesResponse>('/analytics/anomalies'),
+
+  getWeeklyReport: () =>
+    apiClient.get<WeeklyReportData>('/analytics/weekly-report'),
+
+  trackFeature: (featureName: string, eventType: string, metadata?: Record<string, unknown>) =>
+    apiClient.post<{ status: string; event_id?: string }>('/analytics/track-feature', {
+      feature_name: featureName,
+      event_type: eventType,
+      ...(metadata && { metadata }),
+    }),
 };
 
 export const complianceAnalyticsApi = {

@@ -10,29 +10,62 @@ const Login = () => {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaUserId, setMfaUserId] = useState('');
+  const [mfaToken, setMfaToken] = useState('');
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleLoginSuccess = (accessToken: string) => {
+    authLogin(accessToken);
+
+    authApi.getMe().then(user => {
+      authLogin(accessToken, user);
+    }).catch(() => {});
+
+    navigate('/dashboard');
+  };
+
+  const handleLoginSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
     try {
       const response = await authApi.login(username, password);
-      authLogin(response.access_token);
-      
-      try {
-        const user = await authApi.getMe();
-        authLogin(response.access_token, user);
-      } catch {
-        // Continue without user info if fetch fails
-      }
-      
-      navigate('/dashboard');
+      handleLoginSuccess(response.access_token);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid credentials');
+      if (err instanceof Error && err.message.startsWith('MFA_REQUIRED:')) {
+        const userId = err.message.split(':')[1];
+        setMfaUserId(userId);
+        setMfaRequired(true);
+        setError('');
+      } else {
+        setError(err instanceof Error ? err.message : 'Invalid credentials');
+      }
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleMfaSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setIsLoading(true);
+
+    try {
+      const response = await authApi.validateMFA(mfaUserId, mfaToken);
+      handleLoginSuccess(response.access_token);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Invalid MFA code');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleBackToLogin = () => {
+    setMfaRequired(false);
+    setMfaUserId('');
+    setMfaToken('');
+    setError('');
   };
 
   return (
@@ -41,46 +74,81 @@ const Login = () => {
         <h1 className="auth-title">Prequal</h1>
         <p className="auth-subtitle">Subcontractor Compliance Platform</p>
 
-        <form onSubmit={handleSubmit} className="auth-form">
-          {error && <div className="auth-error">{error}</div>}
+        {mfaRequired ? (
+          <form onSubmit={handleMfaSubmit} className="auth-form">
+            <div className="auth-mfa-icon">🔐</div>
+            <p className="auth-mfa-title">Two-Factor Authentication</p>
+            <p className="auth-mfa-desc">
+              Enter the 6-digit code from your authenticator app, or one of your backup codes
+            </p>
 
-          <div className="form-group">
-            <label htmlFor="username">Username</label>
-            <input
-              type="text"
-              id="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              className="form-input"
-              placeholder="Enter your username"
-            />
-          </div>
+            {error && <div className="auth-error">{error}</div>}
 
-          <div className="form-group">
-            <label htmlFor="password">Password</label>
-            <input
-              type="password"
-              id="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="form-input"
-              placeholder="Enter your password"
-            />
-          </div>
+            <div className="form-group">
+              <label htmlFor="mfaToken">Verification Code</label>
+              <input
+                type="text"
+                id="mfaToken"
+                value={mfaToken}
+                onChange={(e) => setMfaToken(e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 12))}
+                required
+                className="form-input"
+                placeholder="000000"
+                maxLength={12}
+                autoFocus
+              />
+            </div>
 
-          <button type="submit" className="auth-button" disabled={isLoading}>
-            {isLoading ? 'Signing in...' : 'Sign In'}
-          </button>
-        </form>
+            <button type="submit" className="auth-button" disabled={isLoading}>
+              {isLoading ? 'Verifying...' : 'Verify'}
+            </button>
 
-        <p className="auth-footer">
-          <Link to="/forgot-password">Forgot Password?</Link>
-        </p>
-        <p className="auth-footer">
-          Don't have an account? <Link to="/register">Register</Link>
-        </p>
+            <button type="button" onClick={handleBackToLogin} className="auth-button-secondary">
+              Back to Login
+            </button>
+          </form>
+        ) : (
+          <form onSubmit={handleLoginSubmit} className="auth-form">
+            {error && <div className="auth-error">{error}</div>}
+
+            <div className="form-group">
+              <label htmlFor="username">Username</label>
+              <input
+                type="text"
+                id="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+                className="form-input"
+                placeholder="Enter your username"
+              />
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="password">Password</label>
+              <input
+                type="password"
+                id="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                className="form-input"
+                placeholder="Enter your password"
+              />
+            </div>
+
+            <button type="submit" className="auth-button" disabled={isLoading}>
+              {isLoading ? 'Signing in...' : 'Sign In'}
+            </button>
+
+            <p className="auth-footer">
+              <Link to="/forgot-password">Forgot Password?</Link>
+            </p>
+            <p className="auth-footer">
+              Don't have an account? <Link to="/register">Register</Link>
+            </p>
+          </form>
+        )}
       </div>
     </div>
   );

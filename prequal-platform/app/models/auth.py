@@ -47,7 +47,11 @@ class User(Base):
     mfa_secret: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_method: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    password_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    mfa_backup_codes: Mapped[Optional[list]] = mapped_column(JSON, nullable=True, default=list)
+    # NOTE: no onupdate here. password_changed_at must only move when the
+    # password actually changes; an onupdate would bump it on every user
+    # UPDATE and spuriously invalidate all of the user's sessions.
+    password_changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     password_history: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
