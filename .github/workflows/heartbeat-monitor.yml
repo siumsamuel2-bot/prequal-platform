@@ -38,7 +38,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: heartbeat-alerts
-          path: C:\Users\siums\AppData\Local\Temp\opencode\heartbeat-alert-*.json
+          path: artifacts/heartbeat/heartbeat-alert-*.json
           retention-days: 7
           if-no-files-found: ignore
 

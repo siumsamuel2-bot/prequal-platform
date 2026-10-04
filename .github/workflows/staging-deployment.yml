@@ -78,7 +78,7 @@ jobs:
     - name: Login to ECR
       uses: docker/login-action@v3
       with:
-        registry: ${{ env.AWS_REGION }}.amazonaws.com
+        registry: ${{ env.AWS_REGION }}.dkr.ecr.amazonaws.com
         username: ${{ secrets.AWS_ACCESS_KEY_ID }}
         password: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 
@@ -87,7 +87,7 @@ jobs:
       id: meta-backend
       uses: docker/metadata-action@v5
       with:
-        images: ${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}
+        images: ${{ env.AWS_REGION }}.dkr.ecr.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}
         tags: |
           type=ref,event=branch
           type=sha,prefix=sha-
@@ -109,7 +109,7 @@ jobs:
       id: meta-frontend
       uses: docker/metadata-action@v5
       with:
-        images: ${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_FRONTEND }}
+        images: ${{ env.AWS_REGION }}.dkr.ecr.amazonaws.com/${{ env.ECR_REPOSITORY_FRONTEND }}
         tags: |
           type=ref,event=branch
           type=sha,prefix=sha-

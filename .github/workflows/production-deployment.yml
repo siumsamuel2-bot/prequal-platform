@@ -26,10 +26,25 @@ env:
   ECS_CLUSTER: prequal-cluster
   ECS_SERVICE_BACKEND: prequal-backend-service
   ECS_SERVICE_FRONTEND: prequal-frontend-service
+  ECS_TASK_DEFINITION: prequal-task
 
 jobs:
+  # Secrets scanning - blocks deployment if secrets found
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks secrets scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   # Validate infrastructure code
   validate-infrastructure:
+    needs: secrets-scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -102,7 +117,7 @@ jobs:
       - name: Login to ECR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.AWS_REGION }}.amazonaws.com
+          registry: ${{ env.AWS_REGION }}.dkr.ecr.amazonaws.com
           username: ${{ secrets.AWS_ACCESS_KEY_ID }}
           password: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       
@@ -111,7 +126,7 @@ jobs:
         id: meta-backend
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}
+          images: ${{ env.AWS_REGION }}.dkr.ecr.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -135,7 +150,7 @@ jobs:
         id: meta-frontend
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_FRONTEND }}
+          images: ${{ env.AWS_REGION }}.dkr.ecr.amazonaws.com/${{ env.ECR_REPOSITORY_FRONTEND }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -158,7 +173,7 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}:${{ github.sha }}
+          image-ref: ${{ env.AWS_REGION }}.dkr.ecr.amazonaws.com/${{ env.ECR_REPOSITORY_BACKEND }}:${{ github.sha }}
           format: 'sarif'
           output: 'trivy-results.sarif'
       
@@ -207,66 +222,66 @@ jobs:
         env:
           TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
 
-# Deploy to ECS
-deploy-ecs:
-  runs-on: ubuntu-latest
-  needs: [build-and-push, deploy-infrastructure]
-  if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
-  environment: production
-  steps:
-  - uses: actions/checkout@v4
+  # Deploy to ECS
+  deploy-ecs:
+    runs-on: ubuntu-latest
+    needs: [build-and-push, deploy-infrastructure]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
 
-  - name: Configure AWS Credentials
-    uses: aws-actions/configure-aws-credentials@v4
-    with:
-      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-  # Run database migrations
-  - name: Run database migrations
-    run: |
-      echo "Running database migrations..."
-      aws ecs run-task \
-        --cluster ${{ env.ECS_CLUSTER }} \
-        --task-definition ${{ env.ECS_TASK_DEFINITION }}-migrate \
-        --network-mode awsvpc \
-        --launch-type FARGATE \
-        --overrides '{"containerOverrides":[{"name":"migrate","command":["python","migrate.py","upgrade"]}]}' \
-        --region ${{ env.AWS_REGION }} || echo "Migration task completed or not required"
+      # Run database migrations
+      - name: Run database migrations
+        run: |
+          echo "Running database migrations..."
+          aws ecs run-task \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --task-definition ${{ env.ECS_TASK_DEFINITION }}-migrate \
+            --network-mode awsvpc \
+            --launch-type FARGATE \
+            --overrides '{"containerOverrides":[{"name":"migrate","command":["python","migrate.py","upgrade"]}]}' \
+            --region ${{ env.AWS_REGION }} || echo "Migration task completed or not required"
 
-  # Update Backend Service
-  - name: Update ECS Backend Service
-    run: |
-      aws ecs update-service \
-      --cluster ${{ env.ECS_CLUSTER }} \
-      --service ${{ env.ECS_SERVICE_BACKEND }} \
-      --force-new-deployment \
-      --region ${{ env.AWS_REGION }}
+      # Update Backend Service
+      - name: Update ECS Backend Service
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE_BACKEND }} \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
 
-  # Update Frontend Service
-  - name: Update ECS Frontend Service
-    run: |
-      aws ecs update-service \
-      --cluster ${{ env.ECS_CLUSTER }} \
-      --service ${{ env.ECS_SERVICE_FRONTEND }} \
-      --force-new-deployment \
-      --region ${{ env.AWS_REGION }}
+      # Update Frontend Service
+      - name: Update ECS Frontend Service
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE_FRONTEND }} \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
 
-  # Wait for deployment
-  - name: Wait for backend deployment
-    run: |
-      aws ecs wait services-stable \
-      --cluster ${{ env.ECS_CLUSTER }} \
-      --services ${{ env.ECS_SERVICE_BACKEND }} \
-      --region ${{ env.AWS_REGION }}
+      # Wait for deployment
+      - name: Wait for backend deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE_BACKEND }} \
+            --region ${{ env.AWS_REGION }}
 
-  - name: Wait for frontend deployment
-    run: |
-      aws ecs wait services-stable \
-      --cluster ${{ env.ECS_CLUSTER }} \
-      --services ${{ env.ECS_SERVICE_FRONTEND }} \
-      --region ${{ env.AWS_REGION }}
+      - name: Wait for frontend deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE_FRONTEND }} \
+            --region ${{ env.AWS_REGION }}
 
   # Health Checks
   health-check:

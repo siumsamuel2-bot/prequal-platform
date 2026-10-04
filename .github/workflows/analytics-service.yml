@@ -52,7 +52,7 @@ jobs:
         env:
           DATABASE_URL: sqlite:///./test_analytics.db
           REDIS_URL: redis://localhost:6379/1
-          SERVICE_API_KEY: ci-test-service-key-not-for-production
+          SERVICE_API_KEY: ${{ secrets.SERVICE_API_KEY }}
           ENVIRONMENT: test
         run: pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
 
