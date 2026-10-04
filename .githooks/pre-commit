@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Prequal pre-commit secret guard (MID-594).
+#
+# Scans only the files staged for this commit and blocks the commit when a
+# high-signal secret pattern is found.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+
+if command -v python3 >/dev/null 2>&1; then
+    PYTHON=python3
+elif command -v python >/dev/null 2>&1; then
+    PYTHON=python
+else
+    echo "pre-commit: python not found; skipping secret scan" >&2
+    exit 0
+fi
+
+"${PYTHON}" scripts/scan_secrets.py --staged

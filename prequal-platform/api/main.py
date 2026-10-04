@@ -12,6 +12,7 @@ from app.logging_config import setup_logging, get_logger
 from app.middleware.rate_limit import setup_rate_limiting
 from app.middleware.correlation_id import setup_correlation_id
 from app.metrics import setup_metrics, update_db_pool_metrics, PROMETHEUS_AVAILABLE
+from app.services.secrets_manager import hydrate_environment, secrets_manager
 
 
 setup_logging("prequal-api")
@@ -36,6 +37,9 @@ async def _update_db_pool_metrics_loop():
 async def lifespan(app: FastAPI):
     """Application lifespan handler with logging."""
     logger.info("Starting up Prequal API")
+    if secrets_manager.enabled:
+        hydrated = hydrate_environment()
+        logger.info("Secrets Manager hydration complete (%d variable(s))", len(hydrated))
     await init_db()
     logger.info("Database connection established")
 

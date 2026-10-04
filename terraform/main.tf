@@ -5,6 +5,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 4.0"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.0"
+    }
   }
 }
 
@@ -447,6 +451,11 @@ resource "aws_secretsmanager_secret" "api_secrets" {
 
   tags = {
     Name = "prequal-api-secrets"
+    # Comma-separated JSON keys the rotation Lambda regenerates on schedule.
+    # Only self-contained, app-generated values belong here. Provider-managed
+    # credentials (OSHA_API_KEY, SMTP_*, ENCRYPTION_KEY) are rotated manually
+    # because they must be updated with the provider / re-encrypt data first.
+    RotationKeys = "SECRET_KEY"
   }
 }
 
