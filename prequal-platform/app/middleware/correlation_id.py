@@ -70,9 +70,17 @@ def setup_correlation_id(app):
     This sets up:
     - CorrelationIDMiddleware for request ID generation/propagation
     - Logging filter to add correlation_id to all log records
+
+    The filter is attached to the root logger's HANDLERS, not just the root
+    logger: logger-level filters do not apply to records propagated from
+    descendant loggers (which is how all app loggers emit), while handler-level
+    filters apply to every record that passes through the handler.
     """
     correlation_filter = CorrelationIDFilter()
-    logging.getLogger().addFilter(correlation_filter)
+    root_logger = logging.getLogger()
+    root_logger.addFilter(correlation_filter)
+    for handler in root_logger.handlers:
+        handler.addFilter(correlation_filter)
 
     app.add_middleware(CorrelationIDMiddleware)
 

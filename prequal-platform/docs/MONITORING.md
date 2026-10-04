@@ -7,14 +7,14 @@ This guide covers the monitoring and logging setup for the Prequal compliance pl
 ## Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Application    │────▶│  Structured Logs │────▶│  Log Aggregator │
-│  (FastAPI)      │     │  (JSON)          │     │  (ELK/Loki)     │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-        │                        │
-        ▼                        ▼
-┌─────────────────┐     ┌──────────────────┐
-│  Health Checks  │     │  Metrics         │
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Application    │────▶│  Promtail        │────▶│  Loki           │────▶│  Grafana        │
+│  (FastAPI)      │     │  (log shipper)   │     │  (log store)    │     │  (dashboards)   │
+└─────────────────┘     └──────────────────┘     └─────────────────┘     └─────────────────┘
+        │                                                ▲
+        ▼                                                │
+┌─────────────────┐     ┌──────────────────┐             │
+│  Health Checks  │     │  Metrics         │─────────────┘
 │  /health/*      │     │  (Prometheus)    │
 └─────────────────┘     └──────────────────┘
 ```
@@ -114,7 +114,7 @@ logger.info("Processing request", extra={
 }
 ```
 
-## Log Aggregation (Optional)
+## Log Aggregation
 
 ### Development - Console Logs
 
@@ -124,24 +124,44 @@ For local development, logs output to console:
 docker-compose -f docker-compose.staging.yml logs -f backend
 ```
 
-### Production - ELK Stack
+### Production - Loki + Grafana + Promtail
 
-For production, use the optional ELK stack:
+Production uses the Loki stack defined in `docker-compose.monitoring.yml` (combined with Prometheus/Grafana for metrics):
 
 ```bash
-# Start logging infrastructure
-docker-compose -f docker-compose.logging.yml up -d
+# Start the full monitoring stack (Prometheus, Grafana, Loki, Promtail, node-exporter, cAdvisor)
+docker-compose -f docker-compose.monitoring.yml up -d
 
-# Access Kibana
-open http://localhost:5601
+# Access Grafana
+open http://localhost:3000
+
+# Query Loki logs
+curl "http://localhost:3100/loki/api/v1/query_range?query=%7Bjob%3D%22prequal-app%22%7D"
 ```
 
-### Configuration
+### How Log Shipping Works
 
-1. **Elasticsearch**: Log storage and search (port 9200)
-2. **Logstash**: Log processing pipeline (port 5044)
-3. **Kibana**: Visualization and dashboards (port 5601)
-4. **Filebeat**: Log shipper (sends logs to Logstash)
+1. **Application**: the FastAPI API emits structured JSON logs (timestamp, level, message, request_id) to stdout and/or `LOG_FILE`
+2. **Docker**: services use the `json-file` logging driver (configured in `docker-compose.prod.yml`)
+3. **Promtail**: discovers containers via the Docker socket (`docker_sd_configs`) and ships their stdout logs to Loki. Docker-discovered logs are labeled `job=prequal-app` plus `service`/`container`/`logstream` via relabel rules. Logs written to `LOG_FILE` (mounted at `./logs`) are picked up by the `application` scrape job.
+4. **Loki**: stores and indexes logs by label (port 3100, config in `monitoring/local-config.yaml`)
+5. **Grafana**: Loki datasource is provisioned via `monitoring/grafana-datasources.yml`; dashboards are provisioned via `monitoring/grafana-dashboards-provider.yml` + the dashboard JSONs
+
+### LogQL Examples
+
+```logql
+# All application logs
+{job="prequal-app"}
+
+# Errors only
+{job="prequal-app"} | json | level="ERROR"
+
+# Logs for a specific request ID
+{job="prequal-app"} | json | request_id="<uuid>"
+
+# Error rate over 24h
+sum(count_over_time({job="prequal-app"} | json | level="ERROR" [24h]))
+```
 
 ## Request Logging
 
@@ -232,17 +252,35 @@ docker-compose logs --since=1h backend | grep "ERROR"
 - Consider authentication for detailed health
 - Use network policies to restrict access
 
+## Dashboards
+
+Grafana dashboards are provisioned automatically when the monitoring stack starts:
+
+| Dashboard | File | Panels |
+|-----------|------|--------|
+| Prequal API (prod) | `monitoring/grafana-dashboard.json` | Error rates, latency, request counts, resource usage — real-time and 24h views |
+| Prequal Staging | `monitoring/grafana-staging-dashboard.json` | Staging environment views |
+| Analytics | `monitoring/grafana-analytics-dashboard.json` | Analytics service views |
+
+Dashboards load from `/etc/grafana/provisioning/dashboards/` via the provider in `monitoring/grafana-dashboards-provider.yml` (folder `Prequal`, 30s refresh interval). Datasources (Prometheus + Loki) come from `monitoring/grafana-datasources.yml`.
+
 ## Next Steps
 
-1. **Metrics Collection**: Add Prometheus metrics
-2. **Distributed Tracing**: Implement OpenTelemetry
-3. **Alerting**: Configure PagerDuty/Slack alerts
-4. **Dashboards**: Create Grafana dashboards
-5. **APM**: Consider application performance monitoring
+1. **Distributed Tracing**: Implement OpenTelemetry
+2. **APM**: Consider application performance monitoring
+3. **Log retention tuning**: adjust Loki retention in `monitoring/local-config.yaml`
 
 ## Related Files
 
 - `app/logging_config.py` - Logging configuration
+- `app/middleware/correlation_id.py` - Correlation ID middleware
+- `app/metrics.py` - Prometheus metrics instrumentation
 - `api/health.py` - Health check endpoints
-- `docker-compose.logging.yml` - ELK stack setup
+- `docker-compose.monitoring.yml` - Loki/Grafana/Prometheus/Promtail stack
+- `monitoring/promtail-config.yml` - Log shipper configuration
+- `monitoring/prometheus.yml` - Prometheus scrape configuration
+- `monitoring/grafana-dashboards-provider.yml` - Dashboard provisioning provider
+- `monitoring/grafana-datasources.yml` - Grafana datasources
+- `monitoring/alerts.yml` - Prometheus alert rules
+- `monitoring/ALERTING.md` - Alerting guide
 - `docker-compose.staging.yml` - Staging environment

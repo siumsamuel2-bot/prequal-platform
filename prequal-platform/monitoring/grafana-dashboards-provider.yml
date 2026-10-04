@@ -1,0 +1,17 @@
+# Grafana dashboard provisioning provider
+# Required for dashboards in /etc/grafana/provisioning/dashboards to load.
+# Mounted by docker-compose.monitoring.yml alongside the dashboard JSON files.
+
+apiVersion: 1
+
+providers:
+  - name: 'prequal-dashboards'
+    orgId: 1
+    folder: 'Prequal'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

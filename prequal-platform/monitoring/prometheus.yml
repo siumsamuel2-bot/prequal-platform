@@ -19,9 +19,44 @@ rule_files:
 # Scrape configurations
 scrape_configs:
   # Prequal API Backend - application metrics
+  # Use dns_sd_configs for Docker service discovery
   - job_name: 'prequal-backend'
+    dns_sd_configs:
+      - names:
+          - 'tasks.backend'
+          - 'backend'
+        type: 'A'
+        port: 8000
+        refresh_interval: 10s
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Fallback static config if DNS discovery fails
+  - job_name: 'prequal-backend-static'
     static_configs:
       - targets: ['backend:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Analytics Service - event ingestion/reporting microservice (MID-588, DevOps: MID-591)
+  - job_name: 'prequal-analytics'
+    dns_sd_configs:
+      - names:
+          - 'tasks.analytics'
+          - 'analytics'
+        type: 'A'
+        port: 8006
+        refresh_interval: 10s
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # Analytics Service fallback static config
+  - job_name: 'prequal-analytics-static'
+    static_configs:
+      - targets: ['analytics:8006']
     metrics_path: '/metrics'
     scrape_interval: 10s
     scrape_timeout: 5s
@@ -50,3 +85,13 @@ scrape_configs:
       - targets: ['traefik:8080']
     metrics_path: '/metrics'
     scrape_interval: 30s
+
+  # Staging environment monitoring
+  - job_name: 'prequal-staging'
+    static_configs:
+      - targets: ['backend-staging:8000']
+        labels:
+          environment: 'staging'
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
