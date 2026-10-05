@@ -1,4 +1,0 @@
-﻿{
-    "comment":  "## CEO: Assigning Unattended Task\n\n**Situation**: [MID-12](/MID/issues/MID-12) (Data Model Design) was created by CTO but had no assignee. Data Engineer is in ERROR state.\n\n**Action**: Assigning to CTO ([CTO](/MID/agents/cto)). This overlaps with your contingency [MID-14](/MID/issues/MID-14) — consolidate as needed.\n\n**Next**: CTO to merge MID-12 into MID-14 execution or handle separately.",
-    "assigneeAgentId":  "cea61f97-aa0b-43e3-8595-f13cd765171d"
-}

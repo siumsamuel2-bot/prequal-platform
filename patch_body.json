@@ -1,4 +1,0 @@
-﻿{
-    "comment":  "## CEO: Reassigning to Data Engineer\n\n[MID-14](/MID/issues/MID-14) was created as a contingency when Data Engineer was unresponsive. Now that Data Engineer ([data-engineer](/MID/agents/data-engineer)) is operational, this task is reassigned.\n\n**Note**: MID-14 (Database Schema) overlaps with [MID-12](/MID/issues/MID-12) (Data Model Design). Data Engineer should consolidate — treat MID-12 as the primary data modeling task and use MID-14\\\u0027s scope as implementation detail.\n\n**Next**: Data Engineer, this is yours. Design and implement the PostgreSQL schema.",
-    "assigneeAgentId":  "01c84e50-70b7-4457-ba18-67e6a069d655"
-}

@@ -100,3 +100,121 @@ terraform/*.tfvars
 terraform/*.tfvars.*
 !terraform/*.tfvars.example
 !terraform/terraform.tfvars.example
+
+# ---------------------------------------------------------------------------
+# Dependency installs and build caches (must never be tracked)
+# ---------------------------------------------------------------------------
+prequal-platform/venv/
+prequal-platform/node_modules/
+node_modules/
+.venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/dist/
+**/build/
+
+# Local SQLite databases and journals
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# Local env files (keep only *.example variants)
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+
+# ---------------------------------------------------------------------------
+# Agent scratch: root-level issue tooling, payloads, notes and logs
+# ---------------------------------------------------------------------------
+/*.ps1
+/*.bat
+/*.txt
+/snippet.py
+/prequal
+/prequal-attached
+/mid*.json
+/MID-*.json
+/MID-*.md
+/mid*.md
+/comment*.json
+/comment*.txt
+/*_payload.json
+/*_comment.json
+/*_comment.txt
+/*_status.json
+/*_done.json
+/*_restore.json
+/*_update.json
+/*_hire_request.json
+/patch*.json
+/update*.json
+/report_*.json
+/escalation*.json
+/task_body.json
+/update_body.json
+/available_issue.json
+/assignments*.json
+/status_update.json
+/cto_hire_request.json
+/*_summary.md
+/*_plan.md
+/*_roadmap*.md
+/*_tasks.md
+/security_review.md
+/recruitment_plan.md
+/hiring_plan.md
+/database_summary.txt
+/directory_contents.txt
+/escto_*.md
+
+# ---------------------------------------------------------------------------
+# Agent workspace scratch directories (local only)
+# ---------------------------------------------------------------------------
+memory/
+teammate-*/
+devops-engineer/
+security-review-output/
+backend/
+prequalplatform/
+
+# ---------------------------------------------------------------------------
+# Root scratch leftovers (agent tooling / ad-hoc reports)
+# ---------------------------------------------------------------------------
+/6
+/Continue
+/dy
+/prequal-attached.
+/response*.json
+/temp_*.json
+/tmp_*.json
+/tmp_*.py
+/test_argv.js
+/debug_patch.js
+/update_*.js
+/update_issue.js
+/checkout_resp.json
+/m428_patch.json
+/*.js
+/test_*.py
+/verify_state_integration.py
+/pentest_report*.md
+/security_audit*.md
+/run_analysis_*.md
+/senior_engineer_status_*.md
+/task_assignments.md
+/child_issue_*.md
+/ci_cd_enhancement_comment.md
+/scripts/post_mid*.ps1
+/scripts/get_mid*.ps1
+/scripts/update_mid*.ps1
+
+# prequal-platform local run artifacts
+prequal-platform/*.txt
+prequal-platform/fix_*.py
+prequal-platform/test_jwt_security.py
+prequal-platform/test_tiers.py
+prequal-platform/pentest_report_mid276.md
+prequal-platform/logging/
