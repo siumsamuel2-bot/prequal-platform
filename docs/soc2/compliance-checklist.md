@@ -22,7 +22,7 @@ Companion to [controls-mapping.md](./controls-mapping.md) and
 ## CC3 — Risk Assessment
 - [✅] Penetration test executed (MID-573 report) with findings tracked
 - [✅] Vulnerability SLAs defined by severity
-- [🟡] Living risk register to be established from pentest backlog
+- [✅] Living risk register established from pentest backlog — [risk-register.md](./risk-register.md) (2026-10-05)
 
 ## CC4 — Monitoring Activities
 - [✅] Prometheus/CloudWatch/Sentry/uptime monitoring live
@@ -40,31 +40,30 @@ Companion to [controls-mapping.md](./controls-mapping.md) and
 - [✅] 90-day automated secret rotation (MID-594)
 - [✅] Data-at-rest encryption of subcontractor PII (Alembic 015/016)
 - [✅] TLS in transit (ACM/ALB)
-- [🔴] Quarterly access-review evidence — procedure defined, first run pending
-- [🔴] Seed `docs/soc2/evidence/access-review-YYYYQn.md` this quarter
+- [✅] Quarterly access-review procedure + first run — [evidence/access-review-2026Q4.md](./evidence/access-review-2026Q4.md) (2026-10-05, CTO sign-off pending)
 
 ## CC7 — System Operations
 - [✅] Dependency scanning + SAST + secrets detection in CI
 - [✅] Incident response plan + emergency rotation path
 - [✅] Structured audit logs + correlation IDs on all requests
-- [🔴] First DR drill not executed (CC7.4/CC9.2)
+- [🟡] DR drill plan written ([disaster-recovery-drill-plan.md](./disaster-recovery-drill-plan.md)); first execution scheduled for pilot-rehearsal week (CC7.4/CC9.2)
 
 ## CC8 — Change Management
 - [✅] PR approval + CI + staged rollout enforced
 
 ## CC9 — Risk Mitigation / Vendor & Continuity
 - [✅] Dependency exception register in patch policy
-- [🟡] Formal vendor assessment register missing (AWS/GHA/payment providers)
-- [🔴] DR drill to validate RTO/RPO
+- [🟡] Vendor assessment register created ([vendor-register.md](./vendor-register.md)); SOC2 report collection pending (AWS/Stripe/GitHub/Sentry/OpenAI)
+- [🟡] DR drill planned; execution pending to validate RTO/RPO
 
 ---
 
 ## Audit-readiness priority actions (before external audit)
 
-1. **Run first quarterly access review** (CC6.3) — Data Engineer runs extract; CTO approves.
-2. **Execute DR drill** (CC9.2) — measure against RTO/RPO in DR plan; file minutes.
-3. **Create vendor register** (CC9.1) — one page per critical vendor w/ SOC2 report refs.
-4. **Formalize risk register** (CC3.1) — migrate pentest backlog into dated register.
+1. ~~**Run first quarterly access review** (CC6.3)~~ ✅ done 2026-10-05 — CTO sign-off pending on [evidence file](./evidence/access-review-2026Q4.md).
+2. **Execute DR drill** (CC9.2) — plan ready; schedule during pilot-rehearsal week, measure vs. RTO/RPO, file minutes.
+3. ~~**Create vendor register** (CC9.1)~~ ✅ register created 2026-10-05 — collect SOC2/AoC reports during pilot quarter.
+4. ~~**Formalize risk register** (CC3.1)~~ ✅ done 2026-10-05 — [risk-register.md](./risk-register.md).
 5. **Archive first monitoring evidence export** (CC4.2) — set a monthly reminder routine.
 
 ## Pilot scope note
