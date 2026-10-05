@@ -130,6 +130,15 @@ class TestSyncRunLogHelpers:
 # 2. Data Quality Checks Pipeline
 # ---------------------------------------------------------------------------
 
+@pytest_asyncio.fixture(autouse=True)
+async def _clean_quality_checks(db_session):
+    """Clean DataQualityCheck table before each test in this class."""
+    from app.models.compliance import DataQualityCheck
+    from sqlalchemy import delete as sa_delete
+    await db_session.execute(sa_delete(DataQualityCheck))
+    await db_session.commit()
+
+
 class TestDataQualityChecks:
     @pytest.mark.asyncio
     async def test_run_data_quality_checks_produces_results(self, db_session):

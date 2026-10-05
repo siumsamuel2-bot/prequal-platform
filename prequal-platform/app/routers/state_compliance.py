@@ -90,7 +90,7 @@ async def lookup_in_state(
     credential_type: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    return await lookup_contractor_in_state(state_code, q, credential_type, db)
+    return await lookup_contractor_in_state(state_code, q, db, credential_type=credential_type)
 
 
 @router.get("/search")
@@ -103,7 +103,7 @@ async def search_across_states(
 
 @router.post("/sync/{state_code}")
 async def trigger_state_sync(state_code: str, db: AsyncSession = Depends(get_db)):
-    return await sync_state_credentials(state_code, db)
+    return await sync_state_credentials(state_code, db=db)
 
 
 @router.post("/sources")

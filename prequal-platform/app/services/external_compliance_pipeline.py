@@ -26,7 +26,7 @@ import os
 import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import asyncpg
@@ -110,6 +110,56 @@ class MatchResult:
     match_score: float = 0.0
     match_method: str = ""
     matched_on: str = ""
+
+    def meets_threshold(self, threshold: float = MATCH_THRESHOLD) -> bool:
+        """Whether this match is confident enough to persist."""
+        return self.subcontractor_id is not None and self.match_score >= threshold
+
+
+class OSHARecordValidationError(Exception):
+    """Raised when an OSHA case record fails pre-load validation."""
+
+
+def validate_osha_case_record(case: Dict[str, Any]) -> str:
+    """Validate a raw OSHA case record before it touches the DB.
+
+    Data-quality gate for the OSHA sync path (previously only state
+    credentials had a validation gate). Records that fail validation are
+    counted as failed and never written to storage.
+
+    Returns the canonical osha_violation_id for valid records.
+    """
+    osha_id = str(case.get("id") or case.get("violation_id") or "").strip()
+    if not osha_id or len(osha_id) > 64:
+        raise OSHARecordValidationError(
+            f"missing or oversized osha_violation_id: {osha_id!r}"
+        )
+
+    # At least one identity signal is required to match a subcontractor later
+    if not (case.get("company_name") or case.get("establishment_name") or case.get("ein")):
+        raise OSHARecordValidationError(
+            f"osha_violation_id={osha_id}: no company name or EIN present"
+        )
+
+    # Dates must parse if present (reject malformed data instead of coercing)
+    for field in ("date_opened", "issued_date", "effective_date", "resolution_date"):
+        raw = case.get(field)
+        if raw and parse_date(raw) is None:
+            raise OSHARecordValidationError(
+                f"osha_violation_id={osha_id}: unparseable {field}: {raw!r}"
+            )
+
+    # Monetary/gravity values must be numeric and non-negative if present
+    for field in ("penalty_amount", "initial_penalty", "gravity_score"):
+        raw = case.get(field)
+        if raw is not None and raw != "":
+            parsed = parse_decimal(raw)
+            if parsed is None or parsed < 0:
+                raise OSHARecordValidationError(
+                    f"osha_violation_id={osha_id}: invalid {field}: {raw!r}"
+                )
+
+    return osha_id
 
 
 @dataclass
@@ -284,12 +334,32 @@ async def run_osha_sync(
             )
 
         run.records_extracted = len(cases)
-        run.records_transformed = len(cases)
         logger.info("Fetched %d OSHA cases", len(cases))
 
+        # In-batch deduplication: OSHA paginated results can contain the same
+        # case on multiple pages. Dedupe before any DB round-trip so we do not
+        # pay a SELECT + upsert per duplicate. Last occurrence wins.
+        unique_cases: Dict[str, dict] = {}
         for case in cases:
+            raw_id = str(case.get("id") or case.get("violation_id") or "").strip()
+            if raw_id:
+                unique_cases[raw_id] = case
+            else:
+                # Keep records with no id; the validation gate will reject them
+                unique_cases[f"__no_id__{len(unique_cases)}"] = case
+        if len(unique_cases) < len(cases):
+            logger.info(
+                "OSHA batch dedupe: dropped %d duplicate case(s) (%d -> %d)",
+                len(cases) - len(unique_cases), len(cases), len(unique_cases),
+            )
+        run.records_transformed = len(unique_cases)
+
+        for case in unique_cases.values():
             try:
                 await _process_osha_case(db, case, run)
+            except OSHARecordValidationError as exc:
+                logger.warning("Dropping invalid OSHA case record: %s", exc)
+                run.records_failed += 1
             except Exception as exc:
                 logger.error("Failed to process OSHA case: %s", exc)
                 run.records_failed += 1
@@ -308,10 +378,9 @@ async def run_osha_sync(
 
 
 async def _process_osha_case(db: AsyncSession, case: dict, run: PipelineRun) -> None:
-    """Process a single OSHA case: match, deduplicate, upsert."""
-    osha_id = str(case.get("id") or case.get("violation_id") or "")
-    if not osha_id:
-        return
+    """Process a single OSHA case: validate, match, deduplicate, upsert."""
+    # Data quality gate: validate raw record before touching the DB
+    osha_id = validate_osha_case_record(case)
 
     existing = await db.execute(
         text("SELECT id, subcontractor_id FROM violations WHERE osha_violation_id = :osha_id"),
@@ -327,10 +396,17 @@ async def _process_osha_case(db: AsyncSession, case: dict, run: PipelineRun) -> 
     match = await match_subcontractor(
         db, ein=ein, name=company_name, license_number=license_num, license_state=license_state
     )
+    # Enforce MATCH_THRESHOLD: sub-threshold matches are too risky to persist.
+    matched_id = match.subcontractor_id if match.meets_threshold() else None
+    if match.subcontractor_id and not matched_id:
+        logger.info(
+            "Discarding sub-threshold match for OSHA case %s (method=%s score=%.2f < %.2f)",
+            osha_id, match.match_method, match.match_score, MATCH_THRESHOLD,
+        )
 
     v_data = {
         "id": str(uuid.uuid4()),
-        "subcontractor_id": str(match.subcontractor_id) if match.subcontractor_id else None,
+        "subcontractor_id": str(matched_id) if matched_id else None,
         "violation_type": case.get("violation_type", "safety"),
         "violation_code": case.get("violation_code") or case.get("citation_number", ""),
         "description": case.get("description") or case.get("violation_description", ""),
@@ -399,7 +475,7 @@ async def _process_osha_case(db: AsyncSession, case: dict, run: PipelineRun) -> 
         )
         run.records_inserted += 1
 
-    if match.subcontractor_id:
+    if matched_id:
         run.records_matched += 1
 
 
@@ -575,6 +651,13 @@ async def _process_state_credential(db: AsyncSession, rec: dict, run: PipelineRu
     match = await match_subcontractor(
         db, ein=ein, name=holder_name, license_number=license_num, license_state=license_state
     )
+    # Enforce MATCH_THRESHOLD: sub-threshold matches are too risky to persist.
+    matched_id = match.subcontractor_id if match.meets_threshold() else None
+    if match.subcontractor_id and not matched_id:
+        logger.info(
+            "Discarding sub-threshold match for state credential %s/%s (method=%s score=%.2f < %.2f)",
+            state_code, cred_num, match.match_method, match.match_score, MATCH_THRESHOLD,
+        )
 
     values = {
         "id": str(uuid.uuid4()),
@@ -595,7 +678,7 @@ async def _process_state_credential(db: AsyncSession, rec: dict, run: PipelineRu
         "last_synced_at": datetime.now(),
         "sync_version": validated.get("sync_version", 1),
         "raw_data": json.dumps(dict(validated)),
-        "subcontractor_id": str(match.subcontractor_id) if match.subcontractor_id else None,
+        "subcontractor_id": str(matched_id) if matched_id else None,
     }
 
     if existing_row:
@@ -644,7 +727,7 @@ async def _process_state_credential(db: AsyncSession, rec: dict, run: PipelineRu
         )
         run.records_inserted += 1
 
-    if match.subcontractor_id:
+    if matched_id:
         run.records_matched += 1
 
 
@@ -694,6 +777,10 @@ async def get_pipeline_health_summary(db: AsyncSession, *, days: int = 7) -> Dic
     """
     summary: Dict[str, Any] = {"period_days": days, "jobs": []}
 
+    # MID-613 fix: previously used INTERVAL ':days days' — the parameter was
+    # quoted inside a string literal so it never bound, and the query failed
+    # with an invalid-interval error on PostgreSQL. make_interval() is the
+    # correct parameterised form.
     result = await db.execute(
         text(
             """
@@ -705,7 +792,7 @@ async def get_pipeline_health_summary(db: AsyncSession, *, days: int = 7) -> Dic
                 MAX(records_processed) as max_records,
                 AVG(EXTRACT(EPOCH FROM (completed_at - started_at))) as avg_duration_sec
             FROM sync_run_logs
-            WHERE started_at > NOW() - INTERVAL ':days days'
+            WHERE started_at > NOW() - make_interval(days => :days)
             GROUP BY job_name
             ORDER BY total_runs DESC
             """
@@ -957,7 +1044,13 @@ async def _log_run(db: AsyncSession, run: PipelineRun, triggered_by: str) -> Non
 # ---------------------------------------------------------------------------
 
 async def check_batch_health(db: AsyncSession, *, days: int = 7) -> Dict[str, Any]:
-    """Check batch processing health and alert on throughput issues.
+    """Check batch processing health and alert on throughput/latency issues.
+
+    MID-613 rewrite: the previous implementation used SQLite-only julianday() /
+    datetime('now') in a PostgreSQL-targeted module, so it failed against the
+    production database. Duration/throughput math is now computed in Python
+    over fetched rows, which is dialect-portable. BATCH_LATENCY_MAX_MS
+    (previously defined but never enforced) now triggers latency alerts.
 
     Returns a summary of batch-level metrics and any triggered alerts.
     """
@@ -968,32 +1061,50 @@ async def check_batch_health(db: AsyncSession, *, days: int = 7) -> Dict[str, An
         "alerts": [],
     }
 
-    # Average throughput per job over the period
+    cutoff = datetime.now() - timedelta(days=days)
     result = await db.execute(
         text(
             """
-            SELECT
-                job_name,
-                AVG(records_processed * 1.0 / NULLIF(julianday(completed_at) - julianday(started_at), 0) / 86400.0) AS avg_throughput,
-                MAX(records_processed) AS max_batch_size,
-                AVG((julianday(completed_at) - julianday(started_at)) * 86400.0) AS avg_duration_sec
+            SELECT job_name, records_processed, started_at, completed_at
             FROM sync_run_logs
-            WHERE started_at > datetime('now', '-' || :days || ' days')
+            WHERE started_at >= :cutoff
             AND completed_at IS NOT NULL
             AND status IN ('completed', 'partial')
-            GROUP BY job_name
+            ORDER BY job_name, started_at
             """
         ),
-        {"days": days},
+        {"cutoff": cutoff},
     )
-    throughput_rows = result.mappings().all()
+    rows = result.mappings().all()
 
-    for row in throughput_rows:
-        job_name = row["job_name"]
-        avg_throughput = float(row["avg_throughput"] or 0)
-        max_batch = int(row["max_batch_size"] or 0)
-        avg_duration = float(row["avg_duration_sec"] or 0)
+    by_job: Dict[str, List[Dict[str, Any]]] = {}
+    for r in rows:
+        started = _parse_dt(r["started_at"])
+        completed = _parse_dt(r["completed_at"])
+        duration_sec = (completed - started).total_seconds() if started and completed else None
+        by_job.setdefault(r["job_name"], []).append(
+            {
+                "records_processed": int(r["records_processed"] or 0),
+                "duration_sec": duration_sec,
+            }
+        )
+
+    for job_name, job_runs in by_job.items():
+        durations = [r["duration_sec"] for r in job_runs if r["duration_sec"] is not None and r["duration_sec"] > 0]
+        avg_duration = sum(durations) / len(durations) if durations else 0.0
+        total_records = sum(r["records_processed"] for r in job_runs)
+        max_batch = max((r["records_processed"] for r in job_runs), default=0)
+        # Throughput per completed run, averaged per-run (rec/sec)
+        run_rates = [
+            r["records_processed"] / r["duration_sec"]
+            for r in job_runs
+            if r["duration_sec"] is not None and r["duration_sec"] > 0
+        ]
+        avg_throughput = sum(run_rates) / len(run_rates) if run_rates else 0.0
+
         summary["metrics"][job_name] = {
+            "runs": len(job_runs),
+            "total_records": total_records,
             "avg_throughput_rps": round(avg_throughput, 2),
             "max_batch_size": max_batch,
             "avg_duration_sec": round(avg_duration, 2),
@@ -1001,7 +1112,7 @@ async def check_batch_health(db: AsyncSession, *, days: int = 7) -> Dict[str, An
 
         # Alert if throughput drops below threshold
         if avg_throughput < BATCH_THROUGHPUT_MIN:
-            alert = {
+            summary["alerts"].append({
                 "alert_type": "batch_throughput_low",
                 "severity": "warning",
                 "job_name": job_name,
@@ -1010,9 +1121,22 @@ async def check_batch_health(db: AsyncSession, *, days: int = 7) -> Dict[str, An
                     f"below threshold of {BATCH_THROUGHPUT_MIN} rec/sec"
                 ),
                 "threshold_value": BATCH_THROUGHPUT_MIN,
-                "actual_value": avg_throughput,
-            }
-            summary["alerts"].append(alert)
+                "actual_value": round(avg_throughput, 2),
+            })
+
+        # Alert if average batch latency exceeds the configured maximum
+        if avg_duration * 1000 > BATCH_LATENCY_MAX_MS:
+            summary["alerts"].append({
+                "alert_type": "batch_latency_high",
+                "severity": "error",
+                "job_name": job_name,
+                "message": (
+                    f"Average batch latency for {job_name} is {avg_duration:.1f}s, "
+                    f"above threshold of {BATCH_LATENCY_MAX_MS / 1000:.1f}s"
+                ),
+                "threshold_value": BATCH_LATENCY_MAX_MS,
+                "actual_value": int(avg_duration * 1000),
+            })
 
     # Current active batch sizes from environment
     summary["current_config"] = {
@@ -1029,6 +1153,25 @@ async def check_batch_health(db: AsyncSession, *, days: int = 7) -> Dict[str, An
 # ---------------------------------------------------------------------------
 # 7. Utilities
 # ---------------------------------------------------------------------------
+
+
+def _parse_dt(value: Any) -> Optional[datetime]:
+    """Coerce a DB value (datetime or ISO string) to a naive datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    s = str(value).strip().replace("Z", "+00:00")
+    for fmt in (None, "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+        try:
+            if fmt is None:
+                dt = datetime.fromisoformat(s.split(".")[0] if "+" not in s else s)
+            else:
+                dt = datetime.strptime(s, fmt)
+            return dt.replace(tzinfo=None)
+        except ValueError:
+            continue
+    return None
 
 
 def parse_date(value: Any) -> Optional[date]:

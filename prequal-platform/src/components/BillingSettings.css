@@ -1,0 +1,208 @@
+.billing-settings {
+  padding: 24px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.billing-settings h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 24px;
+}
+
+.billing-loading {
+  padding: 40px;
+  text-align: center;
+  color: #6b7280;
+}
+
+.billing-message {
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 14px;
+}
+
+.billing-message.success {
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.billing-message.error {
+  background: #fef2f2;
+  color: #dc2626;
+}
+
+.current-subscription {
+  margin-bottom: 40px;
+}
+
+.current-subscription h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 16px;
+}
+
+.subscription-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 24px;
+  border-radius: 16px;
+}
+
+.subscription-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.plan-name {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.status-badge {
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.status-badge.active {
+  background: rgba(16, 185, 129, 0.3);
+}
+
+.status-badge.past_due {
+  background: rgba(245, 158, 11, 0.3);
+}
+
+.subscription-details {
+  margin-bottom: 20px;
+}
+
+.subscription-details p {
+  margin: 4px 0;
+  font-size: 15px;
+  opacity: 0.9;
+}
+
+.manage-button {
+  background: white;
+  color: #667eea;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.manage-button:hover {
+  background: #f7f8ff;
+}
+
+.manage-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.plans-section h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 20px;
+}
+
+.plans-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+}
+
+.plan-card {
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 24px;
+  position: relative;
+  transition: all 0.2s;
+}
+
+.plan-card:hover {
+  border-color: #667eea;
+}
+
+.plan-card.current {
+  border-color: #667eea;
+  background: #f7f8ff;
+}
+
+.current-badge {
+  position: absolute;
+  top: -10px;
+  right: 16px;
+  background: #667eea;
+  color: white;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.plan-card h3 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 8px;
+}
+
+.plan-price {
+  font-size: 28px;
+  font-weight: 700;
+  color: #667eea;
+  margin-bottom: 16px;
+}
+
+.plan-features {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px;
+}
+
+.plan-features li {
+  padding: 6px 0;
+  color: #6b7280;
+  font-size: 14px;
+}
+
+.plan-button {
+  width: 100%;
+  padding: 12px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #667eea;
+  color: white;
+  border: none;
+}
+
+.plan-button:hover {
+  background: #5a67d8;
+}
+
+.plan-button:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+.plan-button.current {
+  background: #e5e7eb;
+  color: #6b7280;
+  cursor: default;
+}

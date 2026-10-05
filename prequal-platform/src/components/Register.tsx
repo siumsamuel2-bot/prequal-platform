@@ -13,6 +13,16 @@ const Register = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  const passwordRequirements = [
+    { met: password.length >= 8, text: 'At least 8 characters' },
+    { met: /[A-Z]/.test(password), text: 'One uppercase letter' },
+    { met: /[a-z]/.test(password), text: 'One lowercase letter' },
+    { met: /\d/.test(password), text: 'One number' },
+    { met: /[!@#$%^&*(),.?":{}|<>]/.test(password), text: 'One special character' },
+  ];
+
+  const allRequirementsMet = passwordRequirements.every(req => req.met);
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
@@ -22,8 +32,8 @@ const Register = () => {
       return;
     }
 
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters');
+    if (!allRequirementsMet) {
+      setError('Password does not meet all requirements');
       return;
     }
 
@@ -32,15 +42,15 @@ const Register = () => {
     try {
       const response = await authApi.register({ name, email, password });
       authLogin(response.access_token);
-      
+
       try {
         const user = await authApi.getMe();
         authLogin(response.access_token, user);
       } catch {
         // Continue without user info if fetch fails
       }
-      
-      navigate('/dashboard');
+
+      navigate('/setup');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed');
     } finally {
@@ -93,8 +103,16 @@ const Register = () => {
               required
               className="form-input"
               placeholder="Create a password"
-              minLength={8}
             />
+            {password && (
+              <div className="password-requirements">
+                {passwordRequirements.map((req, index) => (
+                  <div key={index} className={`requirement ${req.met ? 'met' : ''}`}>
+                    {req.met ? '✓' : '○'} {req.text}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="form-group">
@@ -110,7 +128,7 @@ const Register = () => {
             />
           </div>
 
-          <button type="submit" className="auth-button" disabled={isLoading}>
+          <button type="submit" className="auth-button" disabled={isLoading || !allRequirementsMet}>
             {isLoading ? 'Creating Account...' : 'Create Account'}
           </button>
         </form>

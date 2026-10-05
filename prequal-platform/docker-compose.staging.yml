@@ -127,6 +127,72 @@ services:
       timeout: 5s
       retries: 5
 
+  # Analytics Service - Event ingestion/reporting microservice (MID-588)
+  # DevOps support: MID-591 - independent service with dedicated database
+  analytics:
+    build:
+      context: ../analytics-service
+      dockerfile: Dockerfile
+    container_name: prequal-analytics-staging
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    environment:
+      - ENVIRONMENT=staging
+      - PYTHONUNBUFFERED=1
+      - POSTGRES_SERVER=analytics-db
+      - POSTGRES_USER=analytics
+      - POSTGRES_PASSWORD=${ANALYTICS_DB_PASSWORD}
+      - POSTGRES_DB=analytics_service
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - SERVICE_API_KEY=${SERVICE_API_KEY}
+      - ORG_SERVICE_URL=http://backend:8000
+    depends_on:
+      analytics-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - prequal-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8006/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Dedicated analytics database - database-per-service isolation (MID-591)
+  analytics-db:
+    image: postgres:15-alpine
+    container_name: prequal-analytics-db-staging
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: analytics
+      POSTGRES_PASSWORD: ${ANALYTICS_DB_PASSWORD}
+      POSTGRES_DB: analytics_service
+    volumes:
+      - analytics_postgres_data:/var/lib/postgresql/data
+      - ../analytics-service/database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    networks:
+      - prequal-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analytics -d analytics_service"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # PGAdmin for database management (staging only)
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -155,4 +221,6 @@ volumes:
   redis_data:
     driver: local
   pgadmin_data:
+    driver: local
+  analytics_postgres_data:
     driver: local

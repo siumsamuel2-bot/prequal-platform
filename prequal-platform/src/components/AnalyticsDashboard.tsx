@@ -15,6 +15,7 @@ import { Link } from 'react-router-dom';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Legend,
+  PieChart, Pie, Cell,
 } from 'recharts';
 import './Dashboard.css';
 
@@ -26,6 +27,45 @@ const formatPercent = (value?: number | null): string =>
 
 const formatMs = (value?: number | null): string =>
   value !== undefined && value !== null ? `${Number(value).toFixed(0)}ms` : '—';
+
+const parsePrice = (price: string): number | null => {
+  const match = /\$?\s*([\d,]+(?:\.\d+)?)/.exec(price);
+  if (!match) return null;
+  const value = parseFloat(match[1].replace(/,/g, ''));
+  return Number.isFinite(value) ? value : null;
+};
+
+type HealthStatus = 'healthy' | 'warning' | 'critical';
+
+const HEALTH_STATUS_LABELS: Record<HealthStatus, string> = {
+  healthy: 'Healthy',
+  warning: 'Warning',
+  critical: 'Critical',
+};
+
+const getHealthStatus = (service: SystemHealthData): HealthStatus => {
+  const unit = (service.metric_unit ?? '').toLowerCase();
+  if (unit === 'ms') {
+    if (service.p95_value >= 1000) return 'critical';
+    if (service.p95_value >= 500) return 'warning';
+    return 'healthy';
+  }
+  if (unit === '%' || unit === 'percent') {
+    if (service.p95_value >= 95) return 'critical';
+    if (service.p95_value >= 80) return 'warning';
+    return 'healthy';
+  }
+  return 'healthy';
+};
+
+const getOverallHealthStatus = (services: SystemHealthData[]): HealthStatus => {
+  const statuses = services.map(getHealthStatus);
+  if (statuses.includes('critical')) return 'critical';
+  if (statuses.includes('warning')) return 'warning';
+  return 'healthy';
+};
+
+const PIE_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ec4899', '#06b6d4'];
 
 const AnalyticsDashboard: React.FC = () => {
   const toast = useToast();
@@ -118,7 +158,14 @@ const AnalyticsDashboard: React.FC = () => {
     p95Value: s.p95_value,
     avgValue: s.avg_value,
     unit: s.metric_unit ?? '',
+    status: getHealthStatus(s),
   }));
+
+  const overallHealthStatus = getOverallHealthStatus(systemHealth);
+
+  const revenueDistributionData = plans
+    .map((p) => ({ name: p.name, value: parsePrice(p.price) }))
+    .filter((entry): entry is { name: string; value: number } => entry.value !== null && entry.value > 0);
 
   const kpiCards = [
     { label: 'Total Users', value: formatNumber(engagement?.total_users), icon: '👥', color: '#3b82f6' },
@@ -290,19 +337,83 @@ const AnalyticsDashboard: React.FC = () => {
                     </span>
                   </div>
                 </div>
+                {revenueDistributionData.length > 0 ? (
+                  <div className="chart-container">
+                    <ResponsiveContainer width="100%" height={200}>
+                      <PieChart>
+                        <Pie
+                          data={revenueDistributionData}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={55}
+                          outerRadius={85}
+                          paddingAngle={2}
+                          dataKey="value"
+                          nameKey="name"
+                        >
+                          {revenueDistributionData.map((entry, index) => (
+                            <Cell key={`revenue-cell-${entry.name}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip
+                          contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
+                          formatter={(value) => [`$${Number(value).toLocaleString('en-US')}/month`, 'Monthly Price']}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="pie-legend">
+                      {revenueDistributionData.map((entry, index) => (
+                        <span key={entry.name} className="legend-item">
+                          <span
+                            className="legend-dot"
+                            style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length] }}
+                            aria-hidden="true"
+                          />
+                          {entry.name}
+                          {entry.name === currentPlan?.name ? ' (current)' : ''}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="no-data-message">No revenue distribution data available.</p>
+                )}
               </div>
 
               <div className="chart-section half">
-                <h2>System Health by Service</h2>
+                <div className="section-header">
+                  <h2>System Health by Service</h2>
+                  {servicesData.length > 0 && (
+                    <span
+                      className={`health-badge ${overallHealthStatus}`}
+                      role="status"
+                      aria-label={`Overall system status: ${HEALTH_STATUS_LABELS[overallHealthStatus]}`}
+                    >
+                      {HEALTH_STATUS_LABELS[overallHealthStatus]}
+                    </span>
+                  )}
+                </div>
                 {servicesData.length > 0 ? (
                   <div className="quick-stats">
                     {servicesData.slice(0, 6).map((s) => (
                       <div key={s.name} className="stat-row">
-                        <span>{s.name}</span>
-                        <span className="stat-value">
-                          avg {s.avgValue}
-                          {s.unit} · p95 {s.p95Value}
-                          {s.unit}
+                        <span className="health-service-label">
+                          <span className={`health-dot ${s.status}`} aria-hidden="true" />
+                          <span className="health-service-text">
+                            <span className="health-service-name">{s.name}</span>
+                            <span className="health-service-metrics">
+                              avg {s.avgValue}
+                              {s.unit} · p95 {s.p95Value}
+                              {s.unit}
+                            </span>
+                          </span>
+                        </span>
+                        <span
+                          className={`health-badge ${s.status}`}
+                          role="status"
+                          aria-label={`${s.name} health status: ${HEALTH_STATUS_LABELS[s.status]}`}
+                        >
+                          {HEALTH_STATUS_LABELS[s.status]}
                         </span>
                       </div>
                     ))}

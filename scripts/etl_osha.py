@@ -262,6 +262,95 @@ class OSHAETL:
             raise
 
 
+def _map_status(status: str) -> str:
+    """Map OSHA status to internal status values."""
+    if not status:
+        return "open"
+    s = status.lower().strip()
+    mapping = {
+        "open": "open",
+        "closed": "resolved",
+        "resolved": "resolved",
+        "under_review": "under_review",
+        "pending": "under_review",
+    }
+    return mapping.get(s, "open")
+
+
+def _extract_violation_record(case: dict) -> dict:
+    """Extract violation record from OSHA case data.
+
+    Transforms a raw OSHA case dictionary into a normalized violation record
+    for insertion into the violations table.
+    """
+    from datetime import datetime
+
+    date_opened = case.get("date_opened") or case.get("issued_date")
+    issued_date = None
+    if date_opened:
+        try:
+            issued_date = datetime.strptime(date_opened, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            try:
+                issued_date = datetime.strptime(date_opened, "%m/%d/%Y").date()
+            except (ValueError, TypeError):
+                issued_date = None
+
+    date_closed = case.get("date_closed") or case.get("resolution_date")
+    resolution_date = None
+    if date_closed:
+        try:
+            resolution_date = datetime.strptime(date_closed, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            try:
+                resolution_date = datetime.strptime(date_closed, "%m/%d/%Y").date()
+            except (ValueError, TypeError):
+                resolution_date = None
+
+    return {
+        "violation_code": case.get("case_number", ""),
+        "description": case.get("allegation") or case.get("summary", ""),
+        "status": _map_status(case.get("status", "open")),
+        "is_osha_violation": True,
+        "issued_date": issued_date,
+        "resolution_date": resolution_date,
+        "inspection_number": case.get("inspection_number", ""),
+        "violation_type": case.get("type", "safety"),
+        "gravity_score": case.get("gravity_score"),
+        "penalty_amount": case.get("penalty_amount") or case.get("initial_penalty"),
+    }
+
+
+def _extract_inspection_record(case: dict) -> dict:
+    """Extract inspection record from OSHA case data.
+
+    Transforms a raw OSHA case dictionary into a normalized inspection record
+    for insertion into the osha_inspections table.
+    """
+    from datetime import datetime
+
+    date_opened = case.get("date_opened")
+    inspection_date = None
+    if date_opened:
+        try:
+            inspection_date = datetime.strptime(date_opened, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            try:
+                inspection_date = datetime.strptime(date_opened, "%m/%d/%Y").date()
+            except (ValueError, TypeError):
+                inspection_date = None
+
+    return {
+        "inspection_number": case.get("inspection_number", ""),
+        "site_city": case.get("city", ""),
+        "site_state": case.get("state", ""),
+        "naics_code": case.get("naics", ""),
+        "inspection_date": inspection_date,
+        "activity_number": case.get("activity_number", ""),
+        "site_zip_code": case.get("zip_code", ""),
+    }
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="OSHA Violation ETL Pipeline")
     parser.add_argument("--establishment", help="Establishment name to filter violations")

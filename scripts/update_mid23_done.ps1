@@ -1,3 +1,5 @@
+. "$PSScriptRoot\heartbeat-common.ps1"
+
 $apiUrl = $env:PAPERCLIP_API_URL
 $apiKey = $env:PAPERCLIP_API_KEY
 $runId = $env:PAPERCLIP_RUN_ID
@@ -57,5 +59,17 @@ $body = @{
 } | ConvertTo-Json -Depth 10
 
 $url = "$apiUrl/api/issues/$issueId"
-$response = Invoke-WebRequest -Uri $url -Headers $headers -Method PATCH -Body $body -UseBasicParsing
-Write-Output $response.StatusCode
+
+Write-HeartbeatLog "Updating MID-23 to done status" "INFO"
+$startTime = Get-Date
+
+try {
+    $response = Invoke-HeartbeatRequest -Uri $url -Headers $headers -Method "PATCH" -OperationName "update-mid23-done" -Body $body
+    $duration = (Get-Date) - $startTime
+    Write-HeartbeatLog "Successfully updated MID-23 in $([Math]::Round($duration.TotalSeconds, 2))s" "INFO"
+    Write-Output $response
+} catch {
+    $duration = (Get-Date) - $startTime
+    Write-HeartbeatLog "Failed to update MID-23 after $([Math]::Round($duration.TotalSeconds, 2))s: $_" "ERROR"
+    throw $_
+}

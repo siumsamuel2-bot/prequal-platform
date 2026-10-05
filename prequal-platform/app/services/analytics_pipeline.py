@@ -192,7 +192,7 @@ async def get_certification_export_rows(
             "certification_status": r["certification_status"],
             "verification_status": r["verification_status"],
             "expiration_bucket": r["expiration_bucket"],
-            "days_until_expiration": r["days_until_expiration"],
+            "days_until_expiration": int(r["days_until_expiration"]) if r["days_until_expiration"] is not None else None,
             "verified_at": _to_iso(r["verified_at"]),
             "created_at": _to_iso(r["created_at"]),
             "computed_at": _to_iso(r["computed_at"]),
@@ -237,14 +237,26 @@ async def get_recent_alerts(
     status: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
+    team_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
-    """Return recent alert notifications for the dashboard."""
+    """Return recent alert notifications for the dashboard.
+
+    When team_id is provided (MID-546 / HIGH-3), results are restricted to
+    that team's subcontractors. Passing None preserves platform-wide behavior
+    (admin / scheduled jobs).
+    """
     params: dict[str, Any] = {"limit": limit, "offset": offset}
     filters = ["1=1"]
 
     if status:
         filters.append("status = :status")
         params["status"] = status
+
+    if team_id is not None:
+        filters.append(
+            "subcontractor_id IN (SELECT id FROM subcontractors WHERE team_id = :team_id)"
+        )
+        params["team_id"] = str(team_id)
 
     where_clause = " AND ".join(filters)
 
@@ -291,7 +303,7 @@ async def get_recent_alerts(
             "recipient": r["recipient"],
             "subject": r["subject"],
             "acknowledged_at": _to_iso(r["acknowledged_at"]),
-            "days_until_expiration": r["days_until_expiration"],
+            "days_until_expiration": int(r["days_until_expiration"]) if r["days_until_expiration"] is not None else None,
             "created_at": _to_iso(r["created_at"]),
             "certification_type": r["certification_type"],
             "expiration_date": _to_iso(r["expiration_date"]),
@@ -423,7 +435,9 @@ async def get_feature_adoption_summary(
 ) -> list[dict[str, Any]]:
     """Return daily feature adoption aggregates from mv_feature_adoption_summary."""
     params: dict[str, Any] = {"limit": limit, "offset": offset, "days": days}
-    filters = ["event_date >= CURRENT_DATE - INTERVAL ':days days'"]
+    # Use SQLite-compatible date function instead of PostgreSQL INTERVAL syntax
+    days_ago = f"date('now', '-{days} days')"
+    filters = [f"event_date >= {days_ago}"]
 
     if feature_name:
         filters.append("feature_name = :feature_name")
@@ -474,8 +488,9 @@ async def get_feature_adoption_summary_count(
     days: int = 90,
 ) -> int:
     """Return total count of feature adoption rows for pagination."""
+    days_ago = f"date('now', '-{days} days')"
     params: dict[str, Any] = {"days": days}
-    filters = ["event_date >= CURRENT_DATE - INTERVAL ':days days'"]
+    filters = [f"event_date >= {days_ago}"]
 
     if feature_name:
         filters.append("feature_name = :feature_name")

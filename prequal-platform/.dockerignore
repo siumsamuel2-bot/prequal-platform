@@ -1,71 +1,97 @@
-# Node
-node_modules
-npm-debug.log
-yarn-error.log
-dist
-build
-
 # Git
 .git
 .gitignore
 .gitattributes
 
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Build output
+.next/
+out/
+
 # Environment
 .env
 .env.local
 .env.*.local
-*.local
-!.env.example
+.node.env
+.python.env
 
-# Python
-venv/
-env/
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-.pytest_cache/
-.coverage
-htmlcov/
-.nyc_output
-
-# IDE
-.vscode
-.idea
-*.swp
-*.swo
-*~
-*.tsbuildinfo
-tsconfig.tsbuildinfo
-
-# OS
+# Misc
 .DS_Store
+*.log
+*.tmp
 Thumbs.db
 
-# Logs
-*.log
-logs/
-
-# Cache
-.cache
-.eslintcache
-.stylelintcache
-
-# Archives
-*.tgz
-*.tar
-*.tar.gz
-
-# Documentation (keep README)
+# Documentation
+*.md
 !README.md
-docs/
 
-# Tests
-tests/
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
 
-# Security
-secrets/
-*.key
-*.pem
-*.crt
+# Terraform
+*.tfstate
+*.tfplan
+.terraform/
+
+# Database
+*.db
+*.sqlite3

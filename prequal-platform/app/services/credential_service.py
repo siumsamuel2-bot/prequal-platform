@@ -63,19 +63,19 @@ CERTIFICATION_PATTERNS = {
 }
 
 CERT_NUMBER_PATTERNS = [
-    r"(?:Cert(?:ificate)?\s*(?:Number|No\\.?|#|\\.?)?\\s*:?\\s*)([A-Z0-9-]{4,20})",
-    r"(?:License\s*(?:Number|No\\.?|#|\\.?)?\\s*:?\\s*)([A-Z0-9-]{4,20})",
-    r"(?:Permit\s*(?:Number|No\\.?|#|\\.?)?\\s*:?\\s*)([A-Z0-9-]{4,20})",
-    r"(?:ID\s*:?\\s*)([A-Z0-9-]{4,20})",
-    r"\\b([A-Z]{1,3}[-]?\\d{5,12})\\b",
+    r"(?:Cert(?:ificate)?\s*(?:Number|No\.?|#|\.?)?\s*:?\s*)([A-Z0-9-]{4,20})",
+    r"(?:License\s*(?:Number|No\.?|#|\.?)?\s*:?\s*)([A-Z0-9-]{4,20})",
+    r"(?:Permit\s*(?:Number|No\.?|#|\.?)?\s*:?\s*)([A-Z0-9-]{4,20})",
+    r"(?:ID\s*:?\s*)([A-Z0-9-]{4,20})",
+    r"\b([A-Z]{1,3}[-]?\d{5,12})\b",
 ]
 
 DATE_PATTERNS = [
-    (r"(\\d{1,2})[/\\-](\\d{1,2})[/\\-](\\d{4})", "%m/%d/%Y"),
-    (r"(\\d{1,2})[/\\-](\\d{1,2})[/\\-](\\d{2})", "%m/%d/%y"),
-    (r"(\\d{4})[/\\-](\\d{1,2})[/\\-](\\d{1,2})", "%Y/%m/%d"),
-    (r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\s+(\\d{1,2}),?\\s+(\\d{4})", "%b %d %Y"),
-    (r"(\\d{1,2})\\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\\s+(\\d{4})", "%d %b %Y"),
+    r"(?P<month>\d{1,2})[/\-](?P<day>\d{1,2})[/\-](?P<year>\d{4})",
+    r"(?P<month>\d{1,2})[/\-](?P<day>\d{1,2})[/\-](?P<year>\d{2})",
+    r"(?P<year>\d{4})[/\-](?P<month>\d{1,2})[/\-](?P<day>\d{1,2})",
+    r"(?P<month_name>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(?P<day>\d{1,2}),?\s+(?P<year>\d{4})",
+    r"(?P<day>\d{1,2})\s+(?P<month_name>Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(?P<year>\d{4})",
 ]
 
 ISSUING_AUTHORITY_KEYWORDS = [
@@ -99,30 +99,30 @@ class PatternOCRExtractor:
     def _extract_dates(self, text: str) -> Tuple[Optional[str], Optional[str]]:
         issue_date = None
         expiration_date = None
-        
-        text_lower = text.lower()
-        
+
         date_pattern_results = []
-        for pattern, fmt in self._date_patterns:
+        for pattern in self._date_patterns:
             matches = list(re.finditer(pattern, text, re.IGNORECASE))
             for match in matches:
+                groups = match.groupdict()
                 try:
-                    if len(match.groups()) == 3:
-                        if fmt.count("%Y") == 2:
-                            day, month, year = match.groups()
-                            parsed = datetime.strptime(f"{month}/{day}/{year}", "%m/%d/%Y").date()
-                        elif fmt.count("%y") == 1:
-                            day, month, year = match.groups()
-                            parsed = datetime.strptime(f"{month}/{day}/{year}", "%m/%d/%y").date()
-                        elif fmt.count("%Y") == 1 and fmt.count("%m") == 1:
-                            year, month, day = match.groups()
-                            parsed = datetime.strptime(f"{year}/{month}/{day}", "%Y/%m/%d").date()
-                        else:
-                            continue
-                        date_pattern_results.append((match.start(), parsed))
+                    if groups.get("month_name"):
+                        month = datetime.strptime(
+                            groups["month_name"][:3].title(), "%b"
+                        ).month
+                        day = int(groups["day"])
+                        year = int(groups["year"])
+                    else:
+                        month = int(groups["month"])
+                        day = int(groups["day"])
+                        year = int(groups["year"])
+                        if year < 100:
+                            year += 2000 if year < 70 else 1900
+                    parsed = date(year, month, day)
                 except (ValueError, TypeError):
                     continue
-        
+                date_pattern_results.append((match.start(), parsed))
+
         date_pattern_results.sort(key=lambda x: x[0])
         
         issue_candidates = []

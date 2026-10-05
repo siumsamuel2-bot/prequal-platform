@@ -320,14 +320,12 @@ class TestPatternOCRExtractor:
     @pytest.mark.asyncio
     async def test_extract_cert_type_osha_10(self):
         ocr = PatternOCRExtractor()
-        result = await ocr.extract("/fake/path.txt", "text/plain")
-        assert result.cert_type == "OSHA_10"
+        assert ocr._extract_cert_type("OSHA 10 Hour Construction Safety") == "OSHA_10"
 
     @pytest.mark.asyncio
     async def test_extract_cert_type_osha_30(self):
         ocr = PatternOCRExtractor()
-        result = await ocr.extract("/fake/path.txt", "text/plain")
-        assert result.cert_type == "OSHA_30"
+        assert ocr._extract_cert_type("OSHA 30 Hour Construction Safety") == "OSHA_30"
 
     @pytest.mark.asyncio
     async def test_extract_dates_mmddyyyy(self):

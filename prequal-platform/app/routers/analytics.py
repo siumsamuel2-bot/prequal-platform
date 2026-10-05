@@ -3,15 +3,23 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func, and_, desc
+from sqlalchemy import select, func, and_, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.analytics import AnalyticsEvent, UserFeedback, AnalyticsEventType
 from app.models.auth import User
-from app.routers.auth import get_current_user, TokenData
+from app.routers.auth import get_current_user, require_admin, TokenData
+from app.services.analytics_pipeline import (
+    get_compliance_summary,
+    get_compliance_trends,
+    get_certification_export_rows,
+    get_certification_export_count,
+    get_recent_alerts,
+    get_all_project_compliance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -455,81 +463,110 @@ async def get_performance_metrics(
 async def get_pilot_engagement(
     days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
-    current_user: TokenData = Depends(get_current_user)
+    current_user: TokenData = Depends(get_current_user),
 ):
     from app.models.auth import Organization, User
     
     now = datetime.utcnow()
     cutoff = now - timedelta(days=days)
     
-    total_orgs_result = await db.execute(select(func.count(Organization.id)))
+    user_role = getattr(current_user, 'role', 'viewer')
+    user_id_str = getattr(current_user, 'user_id', None)
+    
+    def _apply_org_filter(query):
+        """Apply organization filtering based on user role."""
+        import asyncio
+        if user_role == "admin":
+            return query
+        if user_id_str:
+            try:
+                user_uuid = UUID(user_id_str)
+            except ValueError:
+                # user_id_str is not a valid UUID (e.g., "manager-id"),
+                # fall back to no org filtering
+                return query
+            if user_role == "manager":
+                team_result = db.execute(
+                    select(TeamMember.team_id).where(TeamMember.user_id == user_uuid)
+                )
+                team_id = team_result.scalar_one_or_none()
+                if team_id:
+                    org_subquery = select(Organization.id).where(Organization.id == team_id)
+                    return query.where(AnalyticsEvent.organization_id.in_(org_subquery))
+                else:
+                    return query.where(AnalyticsEvent.organization_id.is_(None))
+            else:
+                return query.where(AnalyticsEvent.organization_id == User.org_id)
+        return query.where(AnalyticsEvent.organization_id.is_(None))
+    
+    total_orgs_query = _apply_org_filter(select(func.count(Organization.id)))
+    total_orgs_result = await db.execute(total_orgs_query)
     total_orgs = total_orgs_result.scalar() or 0
     
-    active_orgs_result = await db.execute(
-        select(func.count(func.distinct(AnalyticsEvent.organization_id)))
-        .where(AnalyticsEvent.created_at >= cutoff)
-        .where(AnalyticsEvent.organization_id.isnot(None))
+    base_active_orgs = _apply_org_filter(
+        select(func.count(func.distinct(AnalyticsEvent.organization_id))).where(
+            AnalyticsEvent.created_at >= cutoff,
+            AnalyticsEvent.organization_id.isnot(None)
+        )
     )
-    active_orgs_30d = active_orgs_result.scalar() or 0
+    active_orgs_30d = (await db.execute(base_active_orgs)).scalar() or 0
     
-    total_users_result = await db.execute(
-        select(func.count(User.id)).where(User.org_id.isnot(None))
-    )
+    base_total_users = _apply_org_filter(select(func.count(User.id)).where(User.org_id.isnot(None)))
+    total_users_result = await db.execute(base_total_users)
     total_users = total_users_result.scalar() or 0
     
-    active_users_result = await db.execute(
-        select(func.count(func.distinct(AnalyticsEvent.user_id)))
-        .where(AnalyticsEvent.created_at >= cutoff)
-        .where(AnalyticsEvent.user_id.isnot(None))
+    base_active_users = _apply_org_filter(
+        select(func.count(func.distinct(AnalyticsEvent.user_id))).where(
+            AnalyticsEvent.created_at >= cutoff,
+            AnalyticsEvent.user_id.isnot(None)
+        )
     )
-    active_users_30d = active_users_result.scalar() or 0
+    active_users_30d = (await db.execute(base_active_users)).scalar() or 0
     
-    total_events_result = await db.execute(
-        select(func.count(AnalyticsEvent.id))
-        .where(AnalyticsEvent.created_at >= cutoff)
+    total_events_result = _apply_org_filter(
+        select(func.count(AnalyticsEvent.id)).where(AnalyticsEvent.created_at >= cutoff)
     )
-    total_events_30d = total_events_result.scalar() or 0
+    total_events_30d = (await db.execute(total_events_result)).scalar() or 0
     
     avg_events = total_events_30d / active_orgs_30d if active_orgs_30d > 0 else 0
     
-    onboarding_events_result = await db.execute(
-        select(func.count(AnalyticsEvent.id))
-        .where(AnalyticsEvent.created_at >= cutoff)
-        .where(AnalyticsEvent.event_type == 'onboarding_completion')
+    onboarding_events_result = _apply_org_filter(
+        select(func.count(AnalyticsEvent.id)).where(
+            AnalyticsEvent.created_at >= cutoff,
+            AnalyticsEvent.event_type == 'onboarding_completion'
+        )
     )
-    onboarding_events = onboarding_events_result.scalar() or 0
+    onboarding_events = (await db.execute(onboarding_events_result)).scalar() or 0
     onboarding_completion_rate = (onboarding_events / active_orgs_30d * 100) if active_orgs_30d > 0 else 0
     
-    adoption_result = await db.execute(
+    adoption_query = _apply_org_filter(
         select(
             AnalyticsEvent.organization_id,
             AnalyticsEvent.event_type,
             func.count(AnalyticsEvent.id).label('count')
-        )
-        .where(AnalyticsEvent.created_at >= cutoff)
+        ).where(AnalyticsEvent.created_at >= cutoff)
         .where(AnalyticsEvent.organization_id.isnot(None))
         .group_by(AnalyticsEvent.organization_id, AnalyticsEvent.event_type)
     )
     adoption_by_org: dict = {}
-    for row in adoption_result.all():
+    for row in (await db.execute(adoption_query)).all():
         org_id = str(row[0]) if row[0] else 'unknown'
         if org_id not in adoption_by_org:
             adoption_by_org[org_id] = 0
         adoption_by_org[org_id] += row[2]
     
-    recent_orgs_result = await db.execute(
+    recent_orgs_query = _apply_org_filter(
         select(
             AnalyticsEvent.organization_id,
             func.max(AnalyticsEvent.created_at).label('last_activity')
-        )
-        .where(AnalyticsEvent.created_at >= cutoff)
+        ).where(AnalyticsEvent.created_at >= cutoff)
         .where(AnalyticsEvent.organization_id.isnot(None))
         .group_by(AnalyticsEvent.organization_id)
         .order_by(func.max(AnalyticsEvent.created_at).desc())
         .limit(10)
     )
     recently_active_orgs = []
-    for row in recent_orgs_result.all():
+    for row in (await db.execute(recent_orgs_query)).all():
         org_id = row[0]
         last_activity = row[1]
         org_result = await db.execute(select(Organization.name).where(Organization.id == org_id))
@@ -547,20 +584,22 @@ async def get_pilot_engagement(
         day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
         
-        day_orgs_result = await db.execute(
-            select(func.count(func.distinct(AnalyticsEvent.organization_id)))
-            .where(AnalyticsEvent.created_at >= day_start)
-            .where(AnalyticsEvent.created_at < day_end)
-            .where(AnalyticsEvent.organization_id.isnot(None))
+        day_orgs_query = _apply_org_filter(
+            select(func.count(func.distinct(AnalyticsEvent.organization_id))).where(
+                AnalyticsEvent.created_at >= day_start,
+                AnalyticsEvent.created_at < day_end,
+                AnalyticsEvent.organization_id.isnot(None)
+            )
         )
-        day_orgs = day_orgs_result.scalar() or 0
+        day_orgs = (await db.execute(day_orgs_query)).scalar() or 0
         
-        day_events_result = await db.execute(
-            select(func.count(AnalyticsEvent.id))
-            .where(AnalyticsEvent.created_at >= day_start)
-            .where(AnalyticsEvent.created_at < day_end)
+        day_events_query = _apply_org_filter(
+            select(func.count(AnalyticsEvent.id)).where(
+                AnalyticsEvent.created_at >= day_start,
+                AnalyticsEvent.created_at < day_end
+            )
         )
-        day_events = day_events_result.scalar() or 0
+        day_events = (await db.execute(day_events_query)).scalar() or 0
         
         trends.append(EngagementTrendPoint(
             date=day.strftime("%Y-%m-%d"),
@@ -581,3 +620,172 @@ async def get_pilot_engagement(
         recently_active_orgs=recently_active_orgs,
         engagement_trends=trends
     )
+
+
+# ---------------------------------------------------------------------------
+# Compliance endpoints (thin read-through for backward compatibility)
+# These endpoints were moved to analytics-service but are kept here for
+# backward compatibility with existing tests and clients.
+# ---------------------------------------------------------------------------
+
+
+class ComplianceSummaryResponse(BaseModel):
+    total_subcontractors: int
+    active_subcontractors: int
+    suspended_subcontractors: int
+    blacklisted_subcontractors: int
+    compliant_subcontractors: int
+    compliance_rate: float
+    expiring_soon_30d: int
+    expiring_soon_60d: int
+    open_violations: int
+    open_osha_violations: int
+    total_open_penalties: float
+    valid_certifications: int
+    expired_certifications: int
+    pending_verification_certs: int
+    computed_at: Optional[str] = None
+
+
+class ComplianceTrendPoint(BaseModel):
+    date: str
+    active_subcontractors: int
+    valid_certifications: int
+    expired_certifications: int
+    open_violations: int
+    open_osha_violations: int
+    compliance_percentage: float
+    computed_at: Optional[str] = None
+
+
+class AlertResponse(BaseModel):
+    alert_id: str
+    certification_id: str
+    alert_type: str
+    scheduled_for: Optional[str] = None
+    sent_at: Optional[str] = None
+    status: str
+    method: str
+    recipient: str
+    subject: str
+    acknowledged_at: Optional[str] = None
+    days_until_expiration: Optional[int] = None
+    created_at: Optional[str] = None
+    certification_type: Optional[str] = None
+    expiration_date: Optional[str] = None
+    subcontractor_id: str
+    subcontractor_name: str
+    subcontractor_email: str
+    computed_at: Optional[str] = None
+
+
+class ProjectComplianceResponse(BaseModel):
+    project_id: str
+    project_name: str
+    project_number: str
+    project_status: str
+    start_date: Optional[str] = None
+    estimated_end_date: Optional[str] = None
+    total_subcontractors: int
+    active_subcontractors: int
+    suspended_subcontractors: int
+    compliant_subcontractors: int
+    compliance_rate: float
+    open_violations: int
+    open_osha_violations: int
+    total_open_penalties: float
+    expiring_soon_subcontractors: int
+    computed_at: Optional[str] = None
+
+
+@router.get("/compliance/summary", response_model=ComplianceSummaryResponse)
+async def get_compliance_summary_endpoint(
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """GET /api/analytics/compliance/summary - compliance summary for dashboard."""
+    data = await get_compliance_summary(db)
+    return data
+
+
+@router.get("/compliance/trends", response_model=list[ComplianceTrendPoint])
+async def get_compliance_trends_endpoint(
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """GET /api/analytics/compliance/trends?days=N - compliance trends."""
+    data = await get_compliance_trends(db, days=days)
+    return data
+
+
+@router.get("/alerts/recent", response_model=list[AlertResponse])
+async def get_recent_alerts_endpoint(
+    status: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """GET /api/analytics/alerts/recent - recent alert notifications."""
+    data = await get_recent_alerts(db, status=status, limit=limit, offset=offset)
+    return data
+
+
+@router.get("/projects", response_model=list[ProjectComplianceResponse])
+async def get_projects_endpoint(
+    limit: int = Query(500, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """GET /api/analytics/projects - project compliance summaries."""
+    data = await get_all_project_compliance(db, limit=limit, offset=offset)
+    return data
+
+
+@router.get("/compliance/export")
+async def get_compliance_export_endpoint(
+    format: str = Query("json", pattern="^(json|csv)$"),
+    expiration_bucket: Optional[str] = None,
+    subcontractor_id: Optional[str] = None,
+    limit: int = Query(5000, ge=1, le=10000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(get_current_user)
+):
+    """GET /api/analytics/compliance/export - certification export (CSV or JSON)."""
+    data = await get_certification_export_rows(
+        db,
+        expiration_bucket=expiration_bucket,
+        subcontractor_id=subcontractor_id,
+        limit=limit,
+        offset=offset
+    )
+    
+    if format == "csv":
+        import io
+        import csv
+        
+        fieldnames = [
+            "subcontractor_id", "company_name", "email", "subcontractor_status",
+            "certification_id", "certification_type", "certification_number",
+            "issue_date", "expiration_date", "certification_status",
+            "verification_status", "expiration_bucket", "days_until_expiration",
+            "verified_at", "created_at", "computed_at"
+        ]
+        
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(data)
+        content = output.getvalue()
+        output.close()
+        
+        return Response(
+            content=content,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=certifications_export.csv"}
+        )
+    
+    return data

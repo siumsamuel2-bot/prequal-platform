@@ -9,43 +9,32 @@ Validates that the auth endpoints:
 
 Owner: Senior Engineer
 """
+import uuid
+
 import pytest
-import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from app.models.auth import User, Team, TeamMember, Organization
 from app.routers.auth import get_password_hash
-from app.database import AsyncSessionLocal
-
-from api.main import app as fastapi_app
-
-
-def _mock_current_user():
-    from app.schemas.compliance import TokenData
-    return TokenData(sub="test@example.com", user_id="test-user-id", role="admin")
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def override_auth():
-    from app.routers.auth import get_current_user
-    fastapi_app.dependency_overrides[get_current_user] = _mock_current_user
-    yield
-    fastapi_app.dependency_overrides.pop(get_current_user, None)
 
 
 async def create_test_organization(db: AsyncSession, name: str = "Test Org") -> Organization:
-    """Helper to create a test organization."""
-    org = Organization(name=name, slug=f"test-org-{name.lower().replace(' ', '-')}")
+    """Helper to create a test organization with a unique slug."""
+    slug = f"test-org-{name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:8]}"
+    org = Organization(name=name, slug=slug)
     db.add(org)
     await db.flush()
     return org
 
 
-async def create_test_team(db: AsyncSession, name: str = "Test Team", owner_id: str = None) -> Team:
+async def create_test_team(db: AsyncSession, name: str = "Test Team", owner_id=None) -> Team:
     """Helper to create a test team."""
-    team = Team(name=name, owner_id=owner_id or "00000000-0000-0000-0000-000000000001")
+    if owner_id is None:
+        owner_id = uuid.uuid4()
+    elif isinstance(owner_id, str):
+        owner_id = uuid.UUID(owner_id)
+    team = Team(name=name, owner_id=owner_id)
     db.add(team)
     await db.flush()
     return team
@@ -69,14 +58,16 @@ async def create_test_user(
     await db.flush()
 
     org = await create_test_organization(db)
-    team = await create_test_team(db, owner_id=str(user.id))
+    team = await create_test_team(db, owner_id=user.id)
 
     membership = TeamMember(user_id=user.id, team_id=team.id, role="admin")
     db.add(membership)
     await db.flush()
 
     user.org_id = org.id
-    await db.flush()
+    # Commit so the API (which uses its own session) can see these rows.
+    await db.commit()
+    await db.refresh(user)
 
     return user
 
@@ -91,7 +82,7 @@ class TestAuthIntegration:
             "/api/auth/register",
             json={
                 "email": "newuser@example.com",
-                "password": "securepassword123",
+                "password": "Secure-Pass123",
                 "name": "New User"
             }
         )
@@ -117,7 +108,7 @@ class TestAuthIntegration:
             "/api/auth/register",
             json={
                 "email": "duplicate@example.com",
-                "password": "anotherpassword",
+                "password": "Another-Pass1",
                 "name": "Duplicate User"
             }
         )
@@ -197,21 +188,66 @@ class TestAuthIntegration:
                 "password": test_password
             }
         )
-        access_token = login_response.json()["access_token"]
-
-        import jwt
-        from app.routers.auth import create_refresh_token
-        refresh_token = create_refresh_token(
-            data={"sub": test_email, "user_id": str(user.id), "role": user.role}
-        )
+        # Use the refresh token actually issued and stored by /login.
+        refresh_token = login_response.json()["refresh_token"]
 
         response = await async_client.post(
-            f"/api/auth/refresh?refresh_token={refresh_token}"
+            "/api/auth/refresh",
+            json={"refresh_token": refresh_token},
         )
         assert response.status_code == 200, f"Refresh failed: {response.text}"
         data = response.json()
         assert "access_token" in data
         assert data["token_type"] == "bearer"
+
+    async def test_refresh_token_rejects_query_parameter(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Refresh tokens must not be accepted via query string (logged by proxies)."""
+        test_email = "refreshquery@example.com"
+        test_password = "refreshpassword123"
+        await create_test_user(db_session, email=test_email, password=test_password)
+
+        login_response = await async_client.post(
+            "/api/auth/login",
+            json={"username": test_email, "password": test_password},
+        )
+        refresh_token = login_response.json()["refresh_token"]
+
+        response = await async_client.post(
+            f"/api/auth/refresh?refresh_token={refresh_token}"
+        )
+        assert response.status_code == 401, (
+            "Query-parameter refresh tokens must be rejected"
+        )
+
+    async def test_refresh_token_accepts_authorization_header(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Refresh tokens may be supplied via Authorization: Bearer header."""
+        test_email = "refreshheader@example.com"
+        test_password = "refreshpassword123"
+        await create_test_user(db_session, email=test_email, password=test_password)
+
+        login_response = await async_client.post(
+            "/api/auth/login",
+            json={"username": test_email, "password": test_password},
+        )
+        refresh_token = login_response.json()["refresh_token"]
+
+        response = await async_client.post(
+            "/api/auth/refresh",
+            headers={"Authorization": f"Bearer {refresh_token}"},
+        )
+        assert response.status_code == 200, f"Refresh failed: {response.text}"
+        assert "access_token" in response.json()
+
+    async def test_refresh_token_requires_credentials(
+        self, async_client: AsyncClient
+    ) -> None:
+        """POST /api/auth/refresh without a token must return 401."""
+        response = await async_client.post("/api/auth/refresh")
+        assert response.status_code == 401, response.text
 
     async def test_me_endpoint(self, async_client: AsyncClient, db_session: AsyncSession) -> None:
         """GET /api/auth/me should return current user data."""

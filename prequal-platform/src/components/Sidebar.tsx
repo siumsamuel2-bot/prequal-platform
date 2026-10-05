@@ -6,6 +6,7 @@ const Sidebar = () => {
   const location = useLocation();
 
   const isActive = (path: string) => location.pathname === path;
+  const isAnalyticsActive = () => location.pathname.startsWith('/analytics');
 
   const handleLogout = () => {
     logout();
@@ -22,6 +23,24 @@ const Sidebar = () => {
           className={`sidebar-link ${isActive('/dashboard') ? 'active' : ''}`}
         >
           Dashboard
+        </Link>
+        <Link
+          to="/compliance-dashboard"
+          className={`sidebar-link ${isActive('/compliance-dashboard') ? 'active' : ''}`}
+        >
+          Compliance Dashboard
+        </Link>
+        <Link
+          to="/analytics-dashboard"
+          className={`sidebar-link ${isActive('/analytics-dashboard') ? 'active' : ''}`}
+        >
+          Analytics Dashboard
+        </Link>
+        <Link
+          to="/analytics/pilot-engagement"
+          className={`sidebar-link ${isAnalyticsActive() ? 'active' : ''}`}
+        >
+          Analytics Hub
         </Link>
         <Link
           to="/subcontractors"

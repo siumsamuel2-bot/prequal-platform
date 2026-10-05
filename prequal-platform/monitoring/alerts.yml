@@ -1,8 +1,9 @@
 # Alert rules for Prequal Platform
 # Production alerting thresholds based on SLO requirements
+# Includes environment-specific rules for staging and production
 
 groups:
-  - name: prequal-alerts
+  - name: prequal-alerts-production
     rules:
       # Service availability - critical alert
       - alert: ServiceDown
@@ -73,3 +74,199 @@ groups:
         annotations:
           summary: "Unusually high request rate"
           description: "Request rate is {{ $value | humanize }} req/s. May indicate traffic spike or potential attack."
+
+      # SLO: Availability - Error budget burning fast (1h window, 14.4x burn rate)
+      # Consumes 1 hour of error budget in 4 minutes for a 99.9% SLO
+      - alert: PrequalAvailabilityBudgetBurningFast
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[1h]))
+            /
+            sum(rate(http_requests_total[1h]))
+          ) > (1 - 0.999) * 14.4
+        for: 4m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "Availability SLO error budget burning fast"
+          description: "Error rate is {{ $value | humanizePercentage }} and consuming error budget at 14.4x the sustainable rate. Less than 4 minutes remain before the error budget for the 99.9% availability SLO is exhausted."
+          runbook_url: "https://github.com/yourcompany/prequal/blob/main/docs/INCIDENT_RESPONSE_PLAN.md"
+
+      # SLO: Availability - Error budget burning (5m window, 6x burn rate)
+      # Warning: consuming budget faster than sustainable for 30-day SLO
+      - alert: PrequalAvailabilityBudgetBurning
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total[5m]))
+          ) > (1 - 0.999) * 6
+        for: 15m
+        labels:
+          severity: warning
+          slo: availability
+        annotations:
+          summary: "Availability SLO error budget is being consumed"
+          description: "Error rate is {{ $value | humanizePercentage }}, consuming error budget at 6x sustainable rate. This will exhaust the 30-day error budget in approximately 5 days at this pace."
+          runbook_url: "https://github.com/yourcompany/prequal/blob/main/docs/INCIDENT_RESPONSE_PLAN.md"
+
+      # SLO: Latency - p95 latency SLO burning fast
+      # Target: 99% of requests under 500ms (p95)
+      - alert: PrequalLatencySLECBudgetBurningFast
+        expr: |
+          (
+            sum(rate(http_request_duration_seconds_bucket{le="0.5"}[1h]))
+            /
+            sum(rate(http_request_duration_seconds_count[1h]))
+          ) < 0.99
+        for: 4m
+        labels:
+          severity: critical
+          slo: latency
+        annotations:
+          summary: "Latency SLO error budget burning fast"
+          description: "Less than 99% of requests are within the 500ms p95 threshold. Error budget is being consumed at a critical rate. Immediate investigation required."
+          runbook_url: "https://github.com/yourcompany/prequal/blob/main/docs/INCIDENT_RESPONSE_PLAN.md"
+
+      # SLO: Latency - Slow queries warning (p95 > 1s)
+      - alert: PrequalHighLatencyWarning
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1.0
+        for: 10m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "API p95 latency exceeds 1 second"
+          description: "95th percentile latency is {{ $value | humanizeDuration }}. This is approaching the SLO threshold and may indicate database slow queries or external API bottlenecks."
+
+      # SLO: Error rate - 4xx errors high (client issues affecting UX)
+      - alert: HighClientErrorRate
+        expr: rate(http_requests_total{status=~"4.."}[5m]) / rate(http_requests_total[5m]) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High client error rate (4xx)"
+          description: "4xx error rate is {{ $value | humanizePercentage }}. This may indicate client bugs, invalid API usage, or authentication issues affecting users."
+
+    # Analytics Service alerts (MID-588, DevOps: MID-591)
+  - name: prequal-analytics-alerts
+    rules:
+      # Analytics service availability - critical alert
+      - alert: AnalyticsServiceDown
+        expr: up{job="prequal-analytics"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Analytics service is down"
+          description: "The analytics service has been unreachable for more than 2 minutes. Event ingestion is impacted. Check container health and recent deployments."
+
+      # Analytics service high error rate
+      - alert: AnalyticsHighErrorRate
+        expr: rate(http_requests_total{job="prequal-analytics",status=~"5.."}[5m]) / rate(http_requests_total{job="prequal-analytics"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: "High error rate in analytics service"
+          description: "Analytics service error rate is {{ $value | humanizePercentage }} (threshold: 5%). Check service logs and event ingestion pipeline."
+
+      # Analytics service high latency
+      - alert: AnalyticsHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="prequal-analytics"}[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "High latency in analytics service"
+          description: "Analytics service p95 latency is {{ $value | humanizeDuration }} (threshold: 500ms). Review event ingestion queries and Redis stream backlog."
+
+      # Analytics events ingestion stalled - no events processed in 10 minutes
+      - alert: AnalyticsIngestionStalled
+        expr: rate(analytics_events_ingested_total[10m]) == 0
+        for: 10m
+        labels:
+          severity: high
+        annotations:
+          summary: "Analytics event ingestion stalled"
+          description: "No analytics events have been ingested in the last 10 minutes. Check the Redis consumer group and monolith event publishing."
+
+      # Analytics Redis stream backlog growing
+      - alert: AnalyticsStreamBacklog
+        expr: analytics_redis_stream_backlog > 1000
+        for: 5m
+        labels:
+          severity: medium
+        annotations:
+          summary: "Analytics Redis stream backlog is high"
+          description: "The analytics events stream has {{ $value }} pending entries. Consumers may be falling behind - scale ingestion workers."
+
+      # Analytics database connection pressure
+      - alert: AnalyticsDatabasePoolExhaustion
+        expr: db_pool_active_connections{job="prequal-analytics"} / db_pool_max_connections{job="prequal-analytics"} > 0.8
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: "Analytics database pool nearly exhausted"
+          description: "Analytics service database pool is {{ $value | humanizePercentage }} full. Investigate connection leaks or increase pool size."
+
+# Staging environment alerts - relaxed thresholds for development
+  - name: prequal-alerts-staging
+    rules:
+      # Staging service down - shorter detection, lower severity
+      - alert: StagingServiceDown
+        expr: up{job="prequal-backend", environment="staging"} == 0
+        for: 5m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: "Staging environment is down"
+          description: "The staging environment has been unreachable for more than 5 minutes. Check deployment status."
+
+      # Staging high error rate - more lenient threshold
+      - alert: StagingHighErrorRate
+        expr: rate(http_requests_total{status=~"5..", environment="staging"}[5m]) / rate(http_requests_total{environment="staging"}[5m]) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: "High error rate in staging"
+          description: "Error rate is {{ $value | humanizePercentage }} in staging (threshold: 10%). Expected during active development."
+
+      # Staging high latency - relaxed SLO
+      - alert: StagingHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{environment="staging"}[5m])) > 1.0
+        for: 10m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: "High latency in staging"
+          description: "95th percentile latency is {{ $value | humanizeDuration }} in staging (threshold: 1s)."
+
+      # Staging build/deployment failed
+      - alert: StagingDeploymentFailed
+        expr: ci_pipeline_status{pipeline="staging-deployment", status="failed"} == 1
+        for: 0s
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: "Staging deployment pipeline failed"
+          description: "The staging deployment CI/CD pipeline has failed. Check GitHub Actions for details."
+
+      # Staging database connections - warning only
+      - alert: StagingDatabasePoolWarning
+        expr: db_pool_active_connections{environment="staging"} / db_pool_max_connections{environment="staging"} > 0.7
+        for: 10m
+        labels:
+          severity: warning
+          environment: staging
+        annotations:
+          summary: "Database pool utilization high in staging"
+          description: "Database pool is {{ $value | humanizePercentage }} full in staging. Consider investigating connection patterns."

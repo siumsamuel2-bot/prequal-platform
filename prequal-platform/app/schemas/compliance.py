@@ -2,7 +2,7 @@ import re
 from datetime import datetime, date
 from typing import Optional, List
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, ConfigDict, field_validator, computed_field
+from pydantic import BaseModel, EmailStr, ConfigDict, Field, field_validator, computed_field
 from enum import Enum
 
 
@@ -560,6 +560,8 @@ class TokenData(BaseModel):
     team_id: Optional[str] = None
     name: Optional[str] = None
     email: Optional[str] = None
+    jti: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 class UserBase(BaseModel):
@@ -591,16 +593,13 @@ class RegisterRequest(BaseModel):
     @field_validator('password')
     @classmethod
     def validate_password(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError('Password must be at least 8 characters')
-        if not re.search(r'[A-Z]', v):
-            raise ValueError('Password must contain at least one uppercase letter')
-        if not re.search(r'[a-z]', v):
-            raise ValueError('Password must contain at least one lowercase letter')
-        if not re.search(r'\d', v):
-            raise ValueError('Password must contain at least one digit')
-        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', v):
-            raise ValueError('Password must contain at least one special character')
+        # Delegate to the shared policy service so registration, password
+        # change and password reset enforce identical rules.
+        from app.services.password_policy import validate_password_strength
+
+        errors = validate_password_strength(v)
+        if errors:
+            raise ValueError(errors[0])
         return v
 
 
@@ -650,7 +649,7 @@ class DeliveryStatus(str, Enum):
 
 
 class EmailTemplateBase(BaseModel):
-    name: str
+    name: str = Field(min_length=1)
     description: Optional[str] = None
     template_type: str = "alert"
     alert_type: Optional[str] = None
@@ -710,8 +709,8 @@ class NotificationPreferencesBase(BaseModel):
     quiet_hours_end: Optional[int] = None
     quiet_hours_timezone: str = "UTC"
     language: str = "en"
-    max_emails_per_hour: int = 10
-    max_emails_per_day: int = 50
+    max_emails_per_hour: int = Field(default=10, gt=0)
+    max_emails_per_day: int = Field(default=50, gt=0)
 
 
 class NotificationPreferencesCreate(NotificationPreferencesBase):
@@ -738,8 +737,8 @@ class NotificationPreferencesUpdate(BaseModel):
     quiet_hours_end: Optional[int] = None
     quiet_hours_timezone: Optional[str] = None
     language: Optional[str] = None
-    max_emails_per_hour: Optional[int] = None
-    max_emails_per_day: Optional[int] = None
+    max_emails_per_hour: Optional[int] = Field(default=None, gt=0)
+    max_emails_per_day: Optional[int] = Field(default=None, gt=0)
 
 
 class NotificationPreferencesResponse(NotificationPreferencesBase):
@@ -758,13 +757,14 @@ class NotificationDeliveryLogBase(BaseModel):
     recipient_email: EmailStr
     status: DeliveryStatus = DeliveryStatus.PENDING
     provider: str = "smtp"
-    attempt_number: int = 1
-    max_attempts: int = 3
+    attempt_number: int = Field(default=1, gt=0)
+    max_attempts: int = Field(default=3, gt=0)
 
 
 class NotificationDeliveryLogCreate(NotificationDeliveryLogBase):
     alert_notification_id: UUID
     template_id: Optional[UUID] = None
+    email_subject: Optional[str] = Field(default=None, max_length=500)
 
 
 class NotificationDeliveryLogUpdate(BaseModel):

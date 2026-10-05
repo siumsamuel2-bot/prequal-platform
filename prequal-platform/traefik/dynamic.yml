@@ -8,8 +8,16 @@ http:
       service: backend-service
       entryPoints:
         - websecure
-      middlewares:
-        - strip-api-prefix
+      priority: 100
+
+    analytics-internal-router:
+      # Internal/direct service traffic only (service-key authenticated).
+      # External analytics traffic flows through backend-router, which
+      # validates user sessions and delegates with service auth (MID-588).
+      rule: "Host(`analytics.internal`) && PathPrefix(`/api`)"
+      service: analytics-service
+      entryPoints:
+        - websecure
 
     frontend-router:
       rule: "Host(`prequal.yourcompany.com`)"
@@ -23,13 +31,12 @@ http:
         servers:
           - url: "http://backend:8000"
 
+    analytics-service:
+      loadBalancer:
+        servers:
+          - url: "http://analytics-service:8006"
+
     frontend-service:
       loadBalancer:
         servers:
           - url: "http://frontend:80"
-
-  middlewares:
-    strip-api-prefix:
-      stripPrefix:
-        prefixes:
-          - "/api"

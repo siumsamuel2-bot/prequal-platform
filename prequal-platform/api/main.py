@@ -1,17 +1,20 @@
 from contextlib import asynccontextmanager
 import asyncio
 import logging
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.database import init_db, close_db, engine
-from app.routers import auth, compliance, alerts, credentials, analytics, webhooks, billing, state_compliance
+from app.routers import auth, compliance, alerts, credentials, analytics, webhooks, billing, state_compliance, audit, source_db, rate_limits
 from app.logging_config import setup_logging, get_logger
 from app.middleware.rate_limit import setup_rate_limiting
 from app.middleware.correlation_id import setup_correlation_id
+from app.middleware.audit import setup_audit_logging
 from app.metrics import setup_metrics, update_db_pool_metrics, PROMETHEUS_AVAILABLE
+from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.services.secrets_manager import hydrate_environment, secrets_manager
 
 
@@ -75,26 +78,24 @@ async def log_requests(request: Request, call_next):
 
 # Middleware wiring MUST happen at import time: calling app.add_middleware
 # after the application has started raises RuntimeError. Stack order
-# (outermost last): CORS -> correlation ID -> rate limiting -> metrics.
+# (outermost first): CORS -> correlation ID -> audit -> rate limiting -> metrics -> SecurityHeaders.
+app.add_middleware(SecurityHeadersMiddleware)
+
 if PROMETHEUS_AVAILABLE:
     setup_metrics(app)
     logger.info("Prometheus metrics endpoint enabled at /metrics")
 
 setup_rate_limiting(app)
+setup_audit_logging(app)
 setup_correlation_id(app)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://yourdomain.com"
-    ],
+    allow_origins=[origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173").split(",")],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
-    expose_headers=["X-Total-Count"],
+    expose_headers=["X-Total-Count", "X-New-Access-Token", "X-Token-Rotated"],
 )
 
 # Health check endpoints
@@ -106,6 +107,9 @@ app.include_router(analytics.router)
 app.include_router(webhooks.router)
 app.include_router(billing.router)
 app.include_router(state_compliance.router)
+app.include_router(audit.router)
+app.include_router(source_db.router)
+app.include_router(rate_limits.router)
 
 # Import and include health router (must be after app creation)
 from api import health

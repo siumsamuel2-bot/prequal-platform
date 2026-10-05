@@ -1,7 +1,7 @@
 import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,6 +29,52 @@ def convert_mime_type(mime_type: str) -> str:
     return mime_type.lower().strip()
 
 
+def _team_id_from_user(current_user: TokenData) -> Optional[uuid.UUID]:
+    return uuid.UUID(current_user.team_id) if current_user.team_id else None
+
+
+async def _get_subcontractor_scoped(
+    db: AsyncSession,
+    subcontractor_id: uuid.UUID,
+    team_id: Optional[uuid.UUID],
+) -> Subcontractor:
+    """Fetch a subcontractor scoped to the caller's team, or raise 404."""
+    conditions = [Subcontractor.id == subcontractor_id]
+    if team_id:
+        conditions.append(Subcontractor.team_id == team_id)
+    result = await db.execute(select(Subcontractor).where(and_(*conditions)))
+    subcontractor = result.scalar_one_or_none()
+    if not subcontractor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subcontractor not found"
+        )
+    return subcontractor
+
+
+async def _get_upload_scoped(
+    db: AsyncSession,
+    upload_id: uuid.UUID,
+    team_id: Optional[uuid.UUID],
+) -> UploadedCredential:
+    """Fetch an upload whose subcontractor belongs to the caller's team, or 404."""
+    query = (
+        select(UploadedCredential)
+        .join(Subcontractor, UploadedCredential.subcontractor_id == Subcontractor.id)
+        .where(UploadedCredential.id == upload_id)
+    )
+    if team_id:
+        query = query.where(Subcontractor.team_id == team_id)
+    result = await db.execute(query)
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Upload not found"
+        )
+    return upload
+
+
 @router.post("/subcontractors/{subcontractor_id}/credentials/upload", response_model=CredentialUploadStatusResponse, status_code=status.HTTP_201_CREATED)
 async def upload_credential(
     subcontractor_id: uuid.UUID,
@@ -37,16 +83,8 @@ async def upload_credential(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(Subcontractor).where(Subcontractor.id == subcontractor_id)
-    )
-    subcontractor = result.scalar_one_or_none()
-    
-    if not subcontractor:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Subcontractor not found"
-        )
+    team_id = _team_id_from_user(current_user)
+    await _get_subcontractor_scoped(db, subcontractor_id, team_id)
     
     content = await file.read()
     content_type = convert_mime_type(file.content_type or "application/octet-stream")
@@ -94,16 +132,8 @@ async def get_subcontractor_uploads(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(Subcontractor).where(Subcontractor.id == subcontractor_id)
-    )
-    subcontractor = result.scalar_one_or_none()
-    
-    if not subcontractor:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Subcontractor not found"
-        )
+    team_id = _team_id_from_user(current_user)
+    await _get_subcontractor_scoped(db, subcontractor_id, team_id)
     
     query = (
         select(UploadedCredential)
@@ -141,16 +171,8 @@ async def get_upload(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(UploadedCredential).where(UploadedCredential.id == upload_id)
-    )
-    upload = result.scalar_one_or_none()
-    
-    if not upload:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Upload not found"
-        )
+    team_id = _team_id_from_user(current_user)
+    upload = await _get_upload_scoped(db, upload_id, team_id)
     
     return CredentialUploadWithExtraction(
         id=upload.id,
@@ -180,16 +202,8 @@ async def process_upload(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(UploadedCredential).where(UploadedCredential.id == upload_id)
-    )
-    upload = result.scalar_one_or_none()
-    
-    if not upload:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Upload not found"
-        )
+    team_id = _team_id_from_user(current_user)
+    upload = await _get_upload_scoped(db, upload_id, team_id)
     
     if upload.status == UploadStatus.PROCESSING.value:
         raise HTTPException(
@@ -235,16 +249,8 @@ async def create_certification_from_upload(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(UploadedCredential).where(UploadedCredential.id == upload_id)
-    )
-    upload = result.scalar_one_or_none()
-    
-    if not upload:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Upload not found"
-        )
+    team_id = _team_id_from_user(current_user)
+    upload = await _get_upload_scoped(db, upload_id, team_id)
     
     if upload.certification_id:
         raise HTTPException(
@@ -298,16 +304,8 @@ async def delete_upload(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    result = await db.execute(
-        select(UploadedCredential).where(UploadedCredential.id == upload_id)
-    )
-    upload = result.scalar_one_or_none()
-    
-    if not upload:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Upload not found"
-        )
+    team_id = _team_id_from_user(current_user)
+    upload = await _get_upload_scoped(db, upload_id, team_id)
     
     await upload_service.delete_uploaded_file(upload.stored_filename)
     

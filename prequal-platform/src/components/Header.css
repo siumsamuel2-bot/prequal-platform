@@ -33,12 +33,24 @@
 
 .header-button {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 16px;
   background-color: transparent;
   border: 1px solid #e0e0e0;
   border-radius: 8px;
   cursor: pointer;
   font-size: 14px;
+}
+
+.header-button.feedback-btn {
+  color: #3b82f6;
+}
+
+.header-button.feedback-btn:hover {
+  background-color: #eff6ff;
+  border-color: #3b82f6;
 }
 
 .header-button.notifications {

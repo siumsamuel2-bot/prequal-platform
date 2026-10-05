@@ -205,4 +205,67 @@ describe('AnalyticsDashboard', () => {
     expect(billingApi.getSubscription).toHaveBeenCalled();
     expect(billingApi.getPlans).toHaveBeenCalled();
   });
+
+  test('renders revenue distribution pie chart with plan legend', async () => {
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Starter')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Pro (current)')).toBeInTheDocument();
+    expect(screen.getByText('Enterprise')).toBeInTheDocument();
+    expect(screen.queryByText('No revenue distribution data available.')).not.toBeInTheDocument();
+  });
+
+  test('shows empty state for revenue distribution when plans fail to load', async () => {
+    billingApi.getPlans.mockRejectedValue(new Error('Network error'));
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('No revenue distribution data available.')).toBeInTheDocument();
+    });
+  });
+
+  test('renders system health status indicators for healthy services', async () => {
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Healthy')).toHaveLength(2);
+    });
+    expect(screen.getByLabelText('Overall system status: Healthy')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('prequal-api — response_time_ms health status: Healthy')
+    ).toBeInTheDocument();
+  });
+
+  test('flags critical system health status when p95 exceeds threshold', async () => {
+    analyticsApi.getSystemHealth.mockResolvedValue([
+      { ...mockSystemHealth[0], p95_value: 1500 },
+    ]);
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Overall system status: Critical')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByLabelText('prequal-api — response_time_ms health status: Critical')
+    ).toBeInTheDocument();
+  });
+
+  test('flags warning system health status when p95 is elevated', async () => {
+    analyticsApi.getSystemHealth.mockResolvedValue([
+      { ...mockSystemHealth[0], p95_value: 600 },
+    ]);
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Overall system status: Warning')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByLabelText('prequal-api — response_time_ms health status: Warning')
+    ).toBeInTheDocument();
+  });
 });

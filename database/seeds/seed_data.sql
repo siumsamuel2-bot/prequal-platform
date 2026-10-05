@@ -16,6 +16,16 @@
 -- DELETE FROM osha_data_freshness;
 -- DELETE FROM projects;
 -- DELETE FROM subcontractors;
+-- DELETE FROM sync_health;
+-- DELETE FROM data_quality_results;
+-- DELETE FROM data_quality_checks;
+-- DELETE FROM match_rate_tracking;
+-- DELETE FROM data_quality_alert_log;
+-- DELETE FROM data_quality_alert_rules;
+-- DELETE FROM pipeline_performance;
+-- DELETE FROM api_latency_tracking;
+-- DELETE FROM archived_records;
+-- DELETE FROM data_retention_policies;
 
 -- ================================================================
 -- SUBCONTRACTORS: Mix of compliance profiles
@@ -198,4 +208,159 @@ VALUES
     ('99999999-1111-1111-1111-999999991111', 'cccccccc-2222-2222-2222-cccccccc2222', 'aaaaaaaa-7777-7777-7777-aaaaaaaa7777', '2026-04-20 10:00:00-05', 'pending', NULL, NULL, 'Renewal application submitted by Ana; check status with TDLR', '2028-06-30', NOW(), NOW()),
     -- QuickFix cert renewal rejected (sub is blacklisted)
     ('99999999-6666-6666-6666-999999996666', 'cccccccc-6666-6666-6666-cccccccc6666', 'aaaaaaaa-7777-7777-7777-aaaaaaaa7777', '2024-07-01 09:00:00-05', 'rejected', 'aaaaaaaa-7777-7777-7777-aaaaaaaa7777', '2024-07-10 14:20:00-05', 'REJECTED: Subcontractor is blacklisted. Do NOT process renewal request. Company status review recommended.', NULL, NOW(), NOW());
+
+
+-- ================================================================
+-- SYNC RUN LOGS: Pipeline execution history
+-- ================================================================
+
+INSERT INTO sync_run_logs (id, job_name, job_type, status, triggered_by, started_at, completed_at, records_processed, records_inserted, records_updated, records_failed, records_matched, error_message, run_metadata, created_at, updated_at)
+VALUES
+    ('00000000-0000-0000-0001-000000000001', 'osha_daily_sync', 'osha_sync', 'completed', 'schedule', '2026-06-08 01:00:00-05', '2026-06-08 01:05:22-05', 347, 12, 45, 0, 305, NULL, '{"batch_size": 50, "api_version": "v1"}', NOW(), NOW()),
+    ('00000000-0000-0000-0002-000000000002', 'tx_credentials_sync', 'state_credential_sync', 'completed', 'schedule', '2026-06-08 02:00:00-05', '2026-06-08 02:03:15-05', 892, 23, 67, 2, 889, NULL, '{"batch_size": 100, "api_version": "v2"}', NOW(), NOW()),
+    ('00000000-0000-0000-0003-000000000003', 'osha_daily_sync', 'osha_sync', 'failed', 'schedule', '2026-06-07 01:00:00-05', '2026-06-07 01:01:10-05', 0, 0, 0, 0, 0, 'Connection timeout to OSHA API', '{"retry_count": 3}', NOW(), NOW()),
+    ('00000000-0000-0000-0004-000000000004', 'osha_daily_sync', 'osha_sync', 'completed', 'schedule', '2026-06-06 01:00:00-05', '2026-06-06 01:04:45-05', 298, 8, 33, 1, 270, NULL, '{"batch_size": 50}', NOW(), NOW()),
+    ('00000000-0000-0000-0005-000000000005', 'ca_credentials_sync', 'state_credential_sync', 'partial', 'schedule', '2026-06-08 03:00:00-05', '2026-06-08 03:05:00-05', 1500, 50, 200, 5, 1450, 'Rate limit exceeded mid-run', '{"batch_size": 100}', NOW(), NOW());
+
+
+-- ================================================================
+-- SYNC HEALTH: Current sync health for each data source
+-- ================================================================
+
+INSERT INTO sync_health (id, source_name, source_type, sync_run_log_id, health_status, last_successful_sync_at, last_failed_sync_at, last_failure_reason, sync_frequency, expected_next_sync_at, consecutive_failures, consecutive_successes, average_records_processed, average_processing_time_ms, created_at, updated_at)
+VALUES
+    ('11111111-1111-1111-1111-111111111111', 'osha_api', 'api', '00000000-0000-0000-0001-000000000001', 'healthy', '2026-06-08 01:05:22-05', '2026-06-07 01:01:10-05', 'Connection timeout to OSHA API', 'daily', '2026-06-09 01:00:00-05', 0, 2, 322, 285000, NOW(), NOW()),
+    ('11111111-2222-2222-2222-111111111222', 'tx_credentials', 'api', '00000000-0000-0000-0002-000000000002', 'healthy', '2026-06-08 02:03:15-05', NULL, NULL, 'daily', '2026-06-09 02:00:00-05', 0, 5, 890, 185000, NOW(), NOW()),
+    ('11111111-3333-3333-3333-111111111333', 'ca_credentials', 'api', '00000000-0000-0000-0005-000000000005', 'degraded', '2026-06-07 03:00:00-05', '2026-06-08 03:05:00-05', 'Rate limit exceeded mid-run', 'daily', '2026-06-09 03:00:00-05', 1, 4, 1450, 300000, NOW(), NOW()),
+    ('11111111-4444-4444-4444-111111111444', 'ftp_vendors', 'ftp', NULL, 'unknown', NULL, NULL, NULL, 'weekly', '2026-06-14 00:00:00-05', 0, 0, 0, 0, NOW(), NOW());
+
+
+-- ================================================================
+-- DATA QUALITY CHECKS: Active checks for production tables
+-- ================================================================
+
+INSERT INTO data_quality_checks (id, check_name, check_type, table_name, column_name, description, check_query, expected_result, alert_threshold, is_active, priority, created_at, updated_at)
+VALUES
+    ('dqc-0001-0001-0001-000000000001', 'subcontractors_email_unique', 'uniqueness', 'subcontractors', 'email', 'Email addresses must be unique across all subcontractors', 'SELECT COUNT(*) FROM (SELECT email FROM subcontractors GROUP BY email HAVING COUNT(*) > 1) t', '0', 1.0, TRUE, 'critical', NOW(), NOW()),
+    ('dqc-0001-0001-0001-000000000002', 'subcontractors_email_not_null', 'completeness', 'subcontractors', 'email', 'Email must not be null or empty', 'SELECT COUNT(*) FROM subcontractors WHERE email IS NULL OR TRIM(email) = ''''', '0', 1.0, TRUE, 'critical', NOW(), NOW()),
+    ('dqc-0001-0001-0001-000000000003', 'certifications_expiration_not_null', 'completeness', 'certifications', 'expiration_date', 'Certification expiration dates must not be null', 'SELECT COUNT(*) FROM certifications WHERE expiration_date IS NULL', '0', 1.0, TRUE, 'high', NOW(), NOW()),
+    ('dqc-0001-0001-0001-000000000004', 'violations_description_not_null', 'completeness', 'violations', 'description', 'Violation descriptions must not be null or empty', 'SELECT COUNT(*) FROM violations WHERE description IS NULL OR TRIM(description) = ''''', '0', 1.0, TRUE, 'high', NOW(), NOW()),
+    ('dqc-0001-0001-0001-000000000005', 'state_credential_records_freshness', 'freshness', 'state_credential_records', 'last_synced_at', 'State credentials should sync at least once per day', 'SELECT COUNT(*) FROM state_credential_records WHERE last_synced_at < NOW() - INTERVAL ''1 day''', '0', 0.95, TRUE, 'high', NOW(), NOW()),
+    ('dqc-0001-0001-0001-000000000006', 'osha_api_logs_format', 'format', 'osha_api_logs', 'response_status', 'OSHA API response status should be valid integer', 'SELECT COUNT(*) FROM osha_api_logs WHERE response_status IS NOT NULL AND response_status::text !~ ''^[0-9]+$''', '0', 1.0, TRUE, 'medium', NOW(), NOW()),
+    ('dqc-0001-0001-0001-000000000007', 'subcontractors_license_expiration_future', 'format', 'subcontractors', 'license_expiration', 'License expiration should normally be in the future or null', 'SELECT COUNT(*) FROM subcontractors WHERE license_expiration IS NOT NULL AND license_expiration < CURRENT_DATE - INTERVAL ''1 year''', '0', 0.90, TRUE, 'medium', NOW(), NOW()),
+    ('dqc-0001-0001-0001-000000000008', 'project_subcontractors_referential', 'referential', 'project_subcontractors', 'project_id', 'All project_subcontractors must reference valid projects', 'SELECT COUNT(*) FROM project_subcontractors ps LEFT JOIN projects p ON ps.project_id = p.id WHERE p.id IS NULL', '0', 1.0, TRUE, 'critical', NOW(), NOW());
+
+
+-- ================================================================
+-- DATA QUALITY RESULTS: Recent results for active checks
+-- ================================================================
+
+INSERT INTO data_quality_results (id, check_id, run_at, status, actual_result, record_count, failed_record_count, details, execution_time_ms, created_at)
+VALUES
+    ('dqr-0001-0001-0001-000000000001', 'dqc-0001-0001-0001-000000000001', '2026-06-08 06:00:00-05', 'pass', '0', 10, 0, '{"note": "All emails unique"}', 12, NOW()),
+    ('dqr-0001-0001-0001-000000000002', 'dqc-0001-0001-0001-000000000002', '2026-06-08 06:00:00-05', 'pass', '0', 10, 0, '{"note": "No null emails"}', 8, NOW()),
+    ('dqr-0001-0001-0001-000000000003', 'dqc-0001-0001-0001-000000000003', '2026-06-08 06:00:00-05', 'pass', '0', 12, 0, '{"note": "All certifications have expiration dates"}', 15, NOW()),
+    ('dqr-0001-0001-0001-000000000004', 'dqc-0001-0001-0001-000000000004', '2026-06-08 06:00:00-05', 'pass', '0', 7, 0, '{"note": "All violations have descriptions"}', 10, NOW()),
+    ('dqr-0001-0001-0001-000000000005', 'dqc-0001-0001-0001-000000000005', '2026-06-08 06:00:00-05', 'pass', '0', 0, 0, '{"note": "No state credential records to check"}', 5, NOW()),
+    ('dqr-0001-0001-0001-000000000006', 'dqc-0001-0001-0001-000000000006', '2026-06-08 06:00:00-05', 'pass', '0', 3, 0, '{"note": "All response statuses valid integers"}', 7, NOW()),
+    ('dqr-0001-0001-0001-000000000007', 'dqc-0001-0001-0001-000000000007', '2026-06-08 06:00:00-05', 'warning', '1', 10, 1, '{"note": "Heritage Drywall expired over 1 year ago"}', 18, NOW()),
+    ('dqr-0001-0001-0001-000000000008', 'dqc-0001-0001-0001-000000000008', '2026-06-08 06:00:00-05', 'pass', '0', 10, 0, '{"note": "All project references valid"}', 11, NOW());
+
+
+-- ================================================================
+-- MATCH RATE TRACKING: External data match rates over time
+-- ================================================================
+
+INSERT INTO match_rate_tracking (id, source_name, match_date, source_records_total, source_records_new, source_records_updated, matched_records, unmatched_records, fuzzy_matched_records, match_rate_percent, fuzzy_match_percent, match_confidence_avg, reprocess_needed, match_method, notes, created_at)
+VALUES
+    ('mrt-0001-0001-0001-000000000001', 'osha_api', '2026-06-08', 347, 12, 45, 305, 42, 5, 87.90, 11.90, 0.94, FALSE, 'exact', 'Strong match rate; 5 records flagged for manual review', NOW()),
+    ('mrt-0001-0001-0001-000000000002', 'osha_api', '2026-06-07', 298, 8, 33, 270, 28, 3, 90.60, 10.71, 0.95, FALSE, 'exact', 'Consistent with historical trends', NOW()),
+    ('mrt-0001-0001-0001-000000000003', 'tx_credentials', '2026-06-08', 892, 23, 67, 889, 3, 0, 99.66, 0.00, 0.99, FALSE, 'exact', 'Near-perfect match; 3 unmatched need manual review', NOW()),
+    ('mrt-0001-0001-0001-000000000004', 'tx_credentials', '2026-06-07', 850, 15, 50, 845, 5, 1, 99.41, 20.00, 0.98, FALSE, 'exact', 'Stable match rate', NOW()),
+    ('mrt-0001-0001-0001-000000000005', 'ca_credentials', '2026-06-08', 1500, 50, 200, 1450, 50, 10, 96.67, 20.00, 0.92, TRUE, 'exact', '50 unmatched due to rate limit mid-run; will reprocess', NOW()),
+    ('mrt-0001-0001-0001-000000000006', 'ca_credentials', '2026-06-07', 1400, 30, 180, 1380, 20, 4, 98.57, 20.00, 0.93, FALSE, 'exact', 'Normal run', NOW());
+
+
+-- ================================================================
+-- DATA QUALITY ALERT RULES: Active alert rules
+-- ================================================================
+
+INSERT INTO data_quality_alert_rules (id, rule_name, rule_type, source_name, check_id, condition_operator, condition_value, severity, notification_channels, recipients, is_active, cooldown_minutes, last_triggered_at, created_at, updated_at)
+VALUES
+    ('dqa-0001-0001-0001-000000000001', 'OSHA Sync Failure', 'sync_fail', 'osha_api', NULL, '>', '0', 'critical', '{email, slack}', '{ops@prequal.com, #data-alerts}', TRUE, 15, NULL, NOW(), NOW()),
+    ('dqa-0001-0001-0001-000000000002', 'TX Credential Match Rate Drop', 'match_rate_drop', 'tx_credentials', NULL, '<', '95', 'warning', '{email}', '{ops@prequal.com}', TRUE, 30, NULL, NOW(), NOW()),
+    ('dqa-0001-0001-0001-000000000003', 'Data Quality Check Fail', 'quality_fail', NULL, 'dqc-0001-0001-0001-000000000001', '!=', 'pass', 'critical', '{email, slack}', '{ops@prequal.com, #data-alerts}', TRUE, 60, NULL, NOW(), NOW()),
+    ('dqa-0001-0001-0001-000000000004', 'Stale OSHA Data', 'stale_data', 'osha_api', NULL, '>', '86400', 'warning', '{email}', '{ops@prequal.com}', TRUE, 60, '2026-06-07 02:00:00-05', NOW(), NOW()),
+    ('dqa-0001-0001-0001-000000000005', 'Pipeline Performance Degradation', 'performance', 'osha_daily_sync', NULL, '>', '300000', 'warning', '{slack}', '{#data-alerts}', TRUE, 120, NULL, NOW(), NOW());
+
+
+-- ================================================================
+-- DATA QUALITY ALERT LOG: Recent triggered alerts
+-- ================================================================
+
+INSERT INTO data_quality_alert_log (id, rule_id, alert_status, triggered_at, acknowledged_at, acknowledged_by, resolved_at, severity, alert_message, context, created_at)
+VALUES
+    ('dal-0001-0001-0001-000000000001', 'dqa-0001-0001-0001-000000000004', 'acknowledged', '2026-06-07 02:15:00-05', '2026-06-07 02:30:00-05', 'aaaaaaaa-7777-7777-7777-aaaaaaaa7777', '2026-06-07 03:00:00-05', 'warning', 'OSHA data has not been updated in over 24 hours.', '{"last_sync": "2026-06-06 01:05:22", "hours_stale": 25}', NOW()),
+    ('dal-0001-0001-0001-000000000002', 'dqa-0001-0001-0001-000000000001', 'resolved', '2026-06-07 01:05:00-05', '2026-06-07 01:10:00-05', 'aaaaaaaa-7777-7777-7777-aaaaaaaa7777', '2026-06-08 01:05:00-05', 'critical', 'OSHA sync failed with connection timeout.', '{"error": "Connection timeout to OSHA API", "retry_count": 3}', NOW()),
+    ('dal-0001-0001-0001-000000000003', 'dqa-0001-0001-0001-000000000005', 'pending', '2026-06-08 06:10:00-05', NULL, NULL, NULL, 'warning', 'OSHA daily sync processing time exceeded 5 minutes.', '{"duration_ms": 285000, "threshold_ms": 300000}', NOW());
+
+
+-- ================================================================
+-- PIPELINE PERFORMANCE: Execution metrics
+-- ================================================================
+
+INSERT INTO pipeline_performance (id, pipeline_name, run_id, run_start_at, run_end_at, duration_ms, records_processed, records_inserted, records_updated, records_failed, cpu_time_ms, memory_peak_mb, cache_hits, cache_misses, cache_hit_rate_percent, api_calls_made, total_api_latency_ms, avg_api_latency_ms, status, error_message, created_at)
+VALUES
+    ('pp-0001-0001-0001-000000000001', 'osha_daily_sync', '00000000-0000-0000-0001-000000000001', '2026-06-08 01:00:00-05', '2026-06-08 01:05:22-05', 322000, 347, 12, 45, 0, 4000, 512, 280, 67, 80.70, 8, 24000, 3000.00, 'completed', NULL, NOW()),
+    ('pp-0001-0001-0001-000000000002', 'tx_credentials_sync', '00000000-0000-0000-0002-000000000002', '2026-06-08 02:00:00-05', '2026-06-08 02:03:15-05', 195000, 892, 23, 67, 2, 2100, 384, 450, 12, 97.41, 10, 15000, 1500.00, 'completed', NULL, NOW()),
+    ('pp-0001-0001-0001-000000000003', 'osha_daily_sync', NULL, '2026-06-07 01:00:00-05', '2026-06-07 01:01:10-05', 70000, 0, 0, 0, 0, 500, 128, 0, 0, 0.00, 3, 60000, 20000.00, 'failed', 'Connection timeout to OSHA API', NOW()),
+    ('pp-0001-0001-0001-000000000004', 'ca_credentials_sync', '00000000-0000-0000-0005-000000000005', '2026-06-08 03:00:00-05', '2026-06-08 03:05:00-05', 300000, 1500, 50, 200, 5, 8000, 768, 120, 30, 80.00, 20, 120000, 6000.00, 'partial', 'Rate limit exceeded mid-run', NOW());
+
+
+-- ================================================================
+-- API LATENCY TRACKING: Per-endpoint timing
+-- ================================================================
+
+INSERT INTO api_latency_tracking (id, endpoint, method, request_at, latency_ms, status_code, response_size_bytes, is_cache_hit, pipeline_name, error_message, created_at)
+VALUES
+    ('lat-0001-0001-0001-000000000001', 'https://api.osha.gov/violations', 'GET', '2026-06-08 01:00:00-05', 2500, 200, 45000, TRUE, 'osha_daily_sync', NULL, NOW()),
+    ('lat-0001-0001-0001-000000000002', 'https://api.osha.gov/violations', 'GET', '2026-06-08 01:00:01-05', 3500, 200, 52000, FALSE, 'osha_daily_sync', NULL, NOW()),
+    ('lat-0001-0001-0001-000000000003', 'https://api.tdlr.texas.gov/credentials', 'GET', '2026-06-08 02:00:00-05', 1200, 200, 89000, TRUE, 'tx_credentials_sync', NULL, NOW()),
+    ('lat-0001-0001-0001-000000000004', 'https://api.osha.gov/violations', 'GET', '2026-06-07 01:00:00-05', 60000, 504, 0, FALSE, 'osha_daily_sync', 'Connection timeout to OSHA API', NOW()),
+    ('lat-0001-0001-0001-000000000005', 'https://api.ca.gov/credentials', 'GET', '2026-06-08 03:02:30-05', 8000, 429, 0, FALSE, 'ca_credentials_sync', 'Rate limit exceeded', NOW());
+
+
+-- ================================================================
+-- DATA RETENTION POLICIES
+-- ================================================================
+
+INSERT INTO data_quality_results (id, check_id, run_at, status, actual_result, record_count, failed_record_count, details, execution_time_ms, created_at)
+VALUES
+    ('dqr-0001-0001-0001-000000000009', 'dqc-0001-0001-0001-000000000001', '2026-06-07 06:00:00-05', 'pass', '0', 10, 0, '{"note": "All emails unique"}', 14, NOW()),
+    ('dqr-0001-0001-0001-000000000010', 'dqc-0001-0001-0001-000000000002', '2026-06-07 06:00:00-05', 'pass', '0', 10, 0, '{"note": "No null emails"}', 9, NOW()),
+    ('dqr-0001-0001-0001-000000000011', 'dqc-0001-0001-0001-000000000003', '2026-06-07 06:00:00-05', 'pass', '0', 12, 0, '{"note": "All certifications have expiration dates"}', 16, NOW()),
+    ('dqr-0001-0001-0001-000000000012', 'dqc-0001-0001-0001-000000000004', '2026-06-07 06:00:00-05', 'pass', '0', 7, 0, '{"note": "All violations have descriptions"}', 12, NOW()),
+    ('dqr-0001-0001-0001-000000000013', 'dqc-0001-0001-0001-000000000005', '2026-06-07 06:00:00-05', 'pass', '0', 0, 0, '{"note": "No state credential records to check"}', 6, NOW()),
+    ('dqr-0001-0001-0001-000000000014', 'dqc-0001-0001-0001-000000000006', '2026-06-07 06:00:00-05', 'pass', '0', 3, 0, '{"note": "All response statuses valid integers"}', 8, NOW());
+
+
+-- ================================================================
+-- DATA RETENTION POLICIES
+-- ================================================================
+
+INSERT INTO data_retention_policies (id, policy_name, table_name, retention_days, archival_after_days, action, is_active, last_applied_at, records_archived, notes, created_at, updated_at)
+VALUES
+    ('drp-0001-0001-0001-000000000001', 'osha_api_logs_90d', 'osha_api_logs', 90, 30, 'archive', TRUE, '2026-06-01 00:00:00-05', 4200, 'Archive OSHA API logs after 90 days, archive bucket after 30', NOW(), NOW()),
+    ('drp-0001-0001-0001-000000000002', 'sync_run_logs_180d', 'sync_run_logs', 180, 90, 'archive', TRUE, '2026-06-01 00:00:00-05', 12500, 'Archive sync run logs after 180 days', NOW(), NOW()),
+    ('drp-0001-0001-0001-000000000003', 'api_latency_30d', 'api_latency_tracking', 30, 7, 'archive', TRUE, '2026-06-01 00:00:00-05', 89000, 'Archive API latency records after 30 days', NOW(), NOW()),
+    ('drp-0001-0001-0001-000000000004', 'alert_log_365d', 'data_quality_alert_log', 365, 180, 'flag', TRUE, '2026-06-01 00:00:00-05', 0, 'Flag alert logs older than 365 days instead of deleting', NOW(), NOW());
+
+
+-- ================================================================
+-- ARCHIVED RECORDS: Sample archival entry (flagged, not deleted)
+-- ================================================================
+
+INSERT INTO archived_records (id, source_table, source_record_id, archived_at, archive_reason, retention_policy_id, original_data, restored_at, created_at)
+VALUES
+    ('arc-0001-0001-0001-000000000001', 'osha_api_logs', '00000000-0000-0000-0003-000000000003', '2026-06-08 00:00:00-05', 'Data retention policy: 90-day retention for OSHA API logs', 'drp-0001-0001-0001-000000000001', '{"request_type": "inspection", "request_parameters": {"date_range": "2026-03-01/2026-03-31"}, "response_status": 200, "records_processed": 150}', NULL, NOW());
 

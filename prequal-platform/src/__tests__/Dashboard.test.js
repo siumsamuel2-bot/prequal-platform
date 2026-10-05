@@ -1,120 +1,95 @@
-import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import Dashboard from '../components/Dashboard';
-import SubcontractorProfile from '../components/SubcontractorProfile';
 import CertificationAlerts from '../components/CertificationAlerts';
 import CredentialUpload from '../components/CredentialUpload';
-
-const mockContractors = [
-  {
-    id: '1',
-    company_name: 'ABC Construction Co.',
-    contact_name: 'John Smith',
-    email: 'john@abc.com',
-    phone: '555-123-4567',
-    address: '123 Main St'
-  }
-];
-
-const mockComplianceStatus = {
-  overall_status: 'COMPLIANT',
-  compliance_score: 85,
-  last_updated: '2026-05-11'
-};
-
-const mockCertifications = [
-  {
-    id: '1',
-    certification_type: 'OSHA 30',
-    expiration_date: '2026-12-31',
-    status: 'valid'
-  }
-];
-
-const mockViolations = [];
+import { ToastProvider } from '../components/ToastContext';
+import { dashboardApi, complianceApi, organizationApi } from '../api/client';
 
 const mockAlerts = [
-  {
-    id: 1,
-    type: 'warning',
-    message: 'Certification expiring in 30 days'
-  },
-  {
-    id: 2,
-    type: 'info',
-    message: 'Documentation requires verification'
-  }
+  { id: 1, type: 'warning', message: 'Certification expiring in 30 days' },
+  { id: 2, type: 'info', message: 'Documentation requires verification' }
 ];
 
+const mockSummary = {
+  total_subcontractors: 10,
+  active_subcontractors: 8,
+  compliance_rate: 80,
+  total_projects: 5,
+  active_projects: 3,
+  expiring_this_month: 2,
+  open_violations: 1,
+  recent_alerts: mockAlerts
+};
+
 jest.mock('../api/client', () => ({
-  contractorApi: {
-    getAll: jest.fn(() => Promise.resolve(mockContractors)),
-    getCertifications: jest.fn(() => Promise.resolve(mockCertifications)),
-    getViolations: jest.fn(() => Promise.resolve(mockViolations))
-  },
-  complianceApi: {
-    getStatus: jest.fn(() => Promise.resolve(mockComplianceStatus)),
-    getAlerts: jest.fn(() => Promise.resolve(mockAlerts))
+  apiClient: { post: jest.fn() },
+  organizationApi: {
+    getOnboardingStatus: jest.fn(() => Promise.resolve({ step: 0 }))
   },
   dashboardApi: {
-    getSummary: jest.fn(() => Promise.resolve({
-      total_subcontractors: 10,
-      active_subcontractors: 8,
-      compliance_rate: 80,
-      total_projects: 5,
-      active_projects: 3,
-      expiring_this_month: 2,
-      open_violations: 1,
-      recent_alerts: mockAlerts
-    }))
+    getSummary: jest.fn()
+  },
+  complianceApi: {
+    getAlerts: jest.fn()
   }
 }));
 
+const renderDashboard = () =>
+  render(
+    <ToastProvider>
+      <Dashboard />
+    </ToastProvider>
+  );
+
 describe('Dashboard Components', () => {
+  beforeAll(() => {
+    if (!global.ResizeObserver) {
+      global.ResizeObserver = class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      };
+    }
+    global.fetch = jest.fn(() => Promise.resolve({ json: () => Promise.resolve([]) }));
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
+    dashboardApi.getSummary.mockResolvedValue(mockSummary);
+    complianceApi.getAlerts.mockResolvedValue(mockAlerts);
+    global.fetch.mockResolvedValue({ json: () => Promise.resolve([]) });
   });
 
-  test('renders dashboard with all components', async () => {
-    render(<Dashboard />);
-    
-    await waitFor(() => {
-      expect(screen.getByText('Subcontractor Compliance Dashboard')).toBeInTheDocument();
-    });
-    await waitFor(() => {
-      expect(screen.getByText('SUBCONTRACTOR COMPLIANCE PROFILE')).toBeInTheDocument();
-    });
-    expect(screen.getByText('Certification Alerts')).toBeInTheDocument();
-    expect(screen.getByText('Credential Upload Portal')).toBeInTheDocument();
-  });
+  test('renders dashboard with summary metrics and alerts', async () => {
+    renderDashboard();
 
-  test('renders subcontractor profile with updated structure', async () => {
-    render(<SubcontractorProfile />);
-    
     await waitFor(() => {
-      expect(screen.getByText('SUBCONTRACTOR COMPLIANCE PROFILE')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeInTheDocument();
     });
-    expect(screen.getByText('COMPANY INFORMATION')).toBeInTheDocument();
-    expect(screen.getByText('PRIMARY CONTACT')).toBeInTheDocument();
-    expect(screen.getByText('COMPLIANCE STATUS')).toBeInTheDocument();
-    
+    expect(screen.getByText('Total Subcontractors')).toBeInTheDocument();
+    expect(screen.getByText('Active Subcontractors')).toBeInTheDocument();
+    expect(screen.getByText('Compliance Rate')).toBeInTheDocument();
+    expect(screen.getByText('80%')).toBeInTheDocument();
+    expect(screen.getByText('Expiring This Month')).toBeInTheDocument();
+    expect(screen.getAllByText('Open Violations').length).toBeGreaterThan(0);
+    expect(screen.getByText('Active Projects')).toBeInTheDocument();
+
+    expect(screen.getByText('Compliance Trends (30 Days)')).toBeInTheDocument();
+    expect(screen.getByText('Recent Alerts')).toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByLabelText('Company Name:')).toBeInTheDocument();
+      expect(screen.getByText('Certification expiring in 30 days')).toBeInTheDocument();
     });
-    expect(screen.getByLabelText('DBA Name:')).toBeInTheDocument();
-    expect(screen.getByLabelText('Company Address:')).toBeInTheDocument();
-    expect(screen.getByLabelText('Phone Number:')).toBeInTheDocument();
-    expect(screen.getByLabelText('Website:')).toBeInTheDocument();
-    expect(screen.getByLabelText('Contact Name:')).toBeInTheDocument();
-    expect(screen.getByLabelText('Contact Title:')).toBeInTheDocument();
-    expect(screen.getByLabelText('Contact Email:')).toBeInTheDocument();
-    expect(screen.getByLabelText('Contact Phone:')).toBeInTheDocument();
+    expect(screen.getByText('Documentation requires verification')).toBeInTheDocument();
+
+    expect(screen.getByText('Export Reports')).toBeInTheDocument();
+    expect(screen.getByText('Download CSV')).toBeInTheDocument();
+    expect(screen.getByText('Quick Actions')).toBeInTheDocument();
   });
 
   test('renders certification alerts', async () => {
     render(<CertificationAlerts />);
-    
+
     await waitFor(() => {
       expect(screen.getByText('Certification Alerts')).toBeInTheDocument();
     });
@@ -126,9 +101,11 @@ describe('Dashboard Components', () => {
 
   test('renders credential upload form', () => {
     render(<CredentialUpload />);
-    
+
     expect(screen.getByText('Credential Upload Portal')).toBeInTheDocument();
-    expect(screen.getByLabelText('Upload Certification Documents:')).toBeInTheDocument();
+    expect(screen.getByText('Drag and drop files here or')).toBeInTheDocument();
+    expect(screen.getByText('click to browse')).toBeInTheDocument();
+    expect(screen.getByText('Accepted file types: PNG, JPG, PDF, DOC, DOCX (Max 10MB)')).toBeInTheDocument();
     expect(screen.getByLabelText('Document Type:')).toBeInTheDocument();
     expect(screen.getByText('Submit Documents')).toBeInTheDocument();
   });

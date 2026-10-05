@@ -608,6 +608,40 @@ async def async_client(db_engine):
         yield client
 
 
+@pytest_asyncio.fixture(autouse=True, scope="module")
+async def reset_shared_tables(db_engine):
+    """Clear shared compliance-domain tables at each test module boundary (MID-634).
+
+    The session-scoped SQLite database is shared across all test modules, and
+    service code under test can commit rows that fixture-level rollbacks cannot
+    undo (e.g. alert scans commit the session mid-test). Leftover rows then leak
+    across modules and make endpoint tests order-dependent: the analytics
+    ``projects`` tests failed only in the full suite because seeded projects
+    from earlier modules survived their fixture rollback.
+
+    Truncating at module boundaries keeps per-module test sequences intact while
+    guaranteeing each module starts from a clean compliance state. PostgreSQL
+    parity mode (TEST_DATABASE_URL) gets the same guarantee via TRUNCATE CASCADE.
+    """
+    from sqlalchemy import text
+
+    tables = [
+        "alert_notifications",
+        "violations",
+        "certifications",
+        "project_subcontractors",
+        "projects",
+        "subcontractors",
+    ]
+    async with engine.begin() as conn:
+        if _use_postgres:
+            await conn.execute(text(f"TRUNCATE TABLE {', '.join(tables)} CASCADE"))
+        else:
+            for table in tables:
+                await conn.execute(text(f"DELETE FROM {table}"))
+    yield
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def reset_rate_limiter():
     """Reset the app rate-limit storage so cross-suite runs don't hit 429.

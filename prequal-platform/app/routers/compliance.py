@@ -44,8 +44,35 @@ from app.services.pdf_service import (
 )
 from app.services.encryption_service import encrypt_value, decrypt_value
 from app.services.security_service import log_data_access
+from app.services.cache_service import (
+    build_cache_key,
+    cache_service,
+    get_cache_stats,
+)
 
 router = APIRouter(prefix="/api", tags=["compliance"])
+
+
+async def _invalidate_compliance_cache(team_id: Optional[UUID]) -> None:
+    """Invalidate cached compliance responses for a team after a write."""
+    try:
+        await cache_service.invalidate_team_cache(team_id)
+    except Exception:  # pragma: no cover - cache must never break a write
+        logger.warning("Failed to invalidate compliance cache", exc_info=True)
+
+
+@router.get("/cache/stats")
+async def get_cache_statistics(
+    current_user: TokenData = Depends(get_current_user),
+):
+    """Cache hit/miss monitoring for the compliance dashboard endpoints.
+
+    Returns aggregate counters plus whether the Redis backend is reachable.
+    Intended for dashboards/alerting and TTL tuning.
+    """
+    stats = get_cache_stats()
+    stats["cache_available"] = await cache_service.is_available()
+    return stats
 
 
 def get_subcontractor_ein(subcontractor: Subcontractor) -> Optional[str]:
@@ -187,9 +214,37 @@ async def get_subcontractors(
     license_expiring_within_days: Optional[int] = Query(None, ge=0, le=3650, description="Only subcontractors whose license expires within N days"),
     request: Request = None,
     db: AsyncSession = Depends(get_db),
-    current_user: TokenData = Depends(get_current_user)
+    current_user: TokenData = Depends(get_current_user),
 ):
     team_id = UUID(current_user.team_id) if current_user.team_id else None
+    cache_key = build_cache_key(
+        "subcontractors",
+        team_id=str(team_id),
+        status_filter=status_filter.value if status_filter else None,
+        search=search,
+        state=state,
+        city=city,
+        license_state=license_state,
+        license_expiring_within_days=license_expiring_within_days,
+        skip=skip,
+        limit=limit,
+    )
+
+    cached = await cache_service.get(cache_key)
+    if cached is not None:
+        if request:
+            client_ip = request.client.host if request.client else None
+            await log_data_access(
+                db=db,
+                action="cache_hit",
+                resource="subcontractors",
+                resource_id="list",
+                user_id=UUID(current_user.user_id),
+                ip_address=client_ip,
+                details=f"Cache hit for subcontractors list (key: {cache_key[:16]}...)"
+            )
+        return cached
+
     query = select(Subcontractor)
 
     if team_id:
@@ -227,16 +282,18 @@ async def get_subcontractors(
     subcontractors = result.scalars().all()
     response_data = [_subcontractor_response_data(sub) for sub in subcontractors]
 
+    await cache_service.set(cache_key, response_data)
+
     if request:
         client_ip = request.client.host if request.client else None
         await log_data_access(
             db=db,
-            action="list",
+            action="cache_miss",
             resource="subcontractors",
-            resource_id="all",
+            resource_id="list",
             user_id=UUID(current_user.user_id),
             ip_address=client_ip,
-            details=f"Listed {len(response_data)} subcontractors"
+            details=f"Cache miss for subcontractors list (key: {cache_key[:16]}...)"
         )
 
     return response_data
@@ -344,6 +401,7 @@ async def create_subcontractor(
     db.add(db_subcontractor)
     await db.commit()
     await db.refresh(db_subcontractor)
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -395,6 +453,7 @@ async def update_subcontractor(
 
     await db.commit()
     await db.refresh(db_subcontractor)
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -436,6 +495,7 @@ async def delete_subcontractor(
     company_name = db_subcontractor.company_name
     await db.delete(db_subcontractor)
     await db.commit()
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -539,6 +599,7 @@ async def add_subcontractor_certification(
     db.add(db_certification)
     await db.commit()
     await db.refresh(db_certification)
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -588,6 +649,7 @@ async def remove_subcontractor_certification(
     cert_type = db_certification.certification_type
     await db.delete(db_certification)
     await db.commit()
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -704,6 +766,7 @@ async def create_certification(
     db.add(db_certification)
     await db.commit()
     await db.refresh(db_certification)
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -748,6 +811,7 @@ async def update_certification(
 
     await db.commit()
     await db.refresh(db_certification)
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -787,6 +851,7 @@ async def delete_certification(
     cert_type = db_certification.certification_type
     await db.delete(db_certification)
     await db.commit()
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -929,6 +994,7 @@ async def create_violation(
     db.add(db_violation)
     await db.commit()
     await db.refresh(db_violation)
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -973,6 +1039,7 @@ async def update_violation(
 
     await db.commit()
     await db.refresh(db_violation)
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -1012,6 +1079,7 @@ async def delete_violation(
     violation_type = db_violation.violation_type
     await db.delete(db_violation)
     await db.commit()
+    await _invalidate_compliance_cache(team_id)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -1385,6 +1453,7 @@ async def quick_add_subcontractor_to_project(
     db.add(project_assignment)
     await db.commit()
     await db.refresh(db_subcontractor)
+    await _invalidate_compliance_cache(team_id)
     
     result = await db.execute(
         select(Subcontractor)
@@ -1574,7 +1643,12 @@ async def get_dashboard_summary(
     current_user: TokenData = Depends(get_current_user)
 ):
     team_id = UUID(current_user.team_id) if current_user.team_id else None
-    
+
+    cache_key = build_cache_key("compliance:dashboard:summary", team_id)
+    cached = await cache_service.get(cache_key)
+    if cached is not None:
+        return cached
+
     subs_filter = [Subcontractor.team_id == team_id] if team_id else []
     total_subs_result = await db.execute(select(func.count(Subcontractor.id)).where(and_(*subs_filter)) if subs_filter else select(func.count(Subcontractor.id)))
     total_subcontractors = total_subs_result.scalar() or 0
@@ -1631,8 +1705,8 @@ async def get_dashboard_summary(
     recent_alerts = recent_alerts_result.scalars().all()
     
     compliance_rate = (active_subcontractors / total_subcontractors * 100) if total_subcontractors > 0 else 100.0
-    
-    return DashboardSummary(
+
+    result = DashboardSummary(
         total_subcontractors=total_subcontractors,
         active_subcontractors=active_subcontractors,
         compliance_rate=round(compliance_rate, 2),
@@ -1642,6 +1716,8 @@ async def get_dashboard_summary(
         open_violations=open_violations,
         recent_alerts=[AlertNotificationResponse.model_validate(a) for a in recent_alerts]
     )
+    await cache_service.set(cache_key, result.model_dump())
+    return result
 
 
 @router.get("/subcontractors/{subcontractor_id}/report")
@@ -1677,7 +1753,14 @@ async def compliance_summary(
     current_user: TokenData = Depends(get_current_user),
 ):
     """Return a single-row compliance summary for the dashboard card view."""
+    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    cache_key = build_cache_key("compliance:summary", team_id)
+    cached = await cache_service.get(cache_key)
+    if cached is not None:
+        return ComplianceSummaryResponse(**cached)
+
     data = await get_compliance_summary(db)
+    await cache_service.set(cache_key, data)
     return ComplianceSummaryResponse(**data)
 
 
@@ -1688,8 +1771,16 @@ async def compliance_trends(
     current_user: TokenData = Depends(get_current_user),
 ):
     """Return daily compliance trend points for the last ``days`` days."""
+    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    cache_key = build_cache_key("compliance:trends", team_id, days=days)
+    cached = await cache_service.get(cache_key)
+    if cached is not None:
+        return cached
+
     data = await get_compliance_trends(db, days=days)
-    return [ComplianceTrendPoint(**row).model_dump() for row in data]
+    result = [ComplianceTrendPoint(**row).model_dump() for row in data]
+    await cache_service.set(cache_key, result)
+    return result
 
 
 @router.get("/compliance/export")

@@ -54,10 +54,10 @@ class DuplicateCheckResult:
 
 def jaro_winkler(s1: str, s2: str) -> float:
     """Compute Jaro-Winkler similarity between two strings (0.0 to 1.0)."""
-    if s1 == s2:
-        return 1.0
     if not s1 or not s2:
         return 0.0
+    if s1 == s2:
+        return 1.0
 
     # Jaro similarity
     len1, len2 = len(s1), len(s2)
@@ -123,10 +123,11 @@ def normalize_ein(ein: str) -> str:
     """Normalize EIN to XX-XXXXXXX format, or return empty if invalid."""
     if not ein:
         return ""
-    cleaned = ein.strip().upper().replace("-", "").replace(" ", "")
+    stripped = ein.strip().upper()
+    cleaned = stripped.replace("-", "").replace(" ", "")
     if len(cleaned) == 9 and cleaned.isdigit():
         return f"{cleaned[:2]}-{cleaned[2:]}"
-    return cleaned
+    return stripped
 
 
 def normalize_license(license_number: str) -> str:
@@ -364,10 +365,10 @@ def parse_iso_date(value: Any) -> Optional[date]:
     """Parse ISO date string to date object."""
     if not value:
         return None
-    if isinstance(value, date):
-        return value
     if isinstance(value, datetime):
         return value.date()
+    if isinstance(value, date):
+        return value
     try:
         return datetime.fromisoformat(str(value)).date()
     except (ValueError, TypeError):

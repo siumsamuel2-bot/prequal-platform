@@ -1,3 +1,5 @@
+. "$PSScriptRoot\heartbeat-common.ps1"
+
 $apiUrl = $env:PAPERCLIP_API_URL
 $apiKey = $env:PAPERCLIP_API_KEY
 $runId = $env:PAPERCLIP_RUN_ID
@@ -16,5 +18,17 @@ $body = @{
 } | ConvertTo-Json
 
 $url = "$apiUrl/api/issues/$issueId/checkout"
-$response = Invoke-WebRequest -Uri $url -Headers $headers -Method POST -Body $body -UseBasicParsing
-Write-Output $response.Content
+
+Write-HeartbeatLog "Checking out issue $issueId" "INFO"
+$startTime = Get-Date
+
+try {
+    $response = Invoke-HeartbeatRequest -Uri $url -Headers $headers -Method "POST" -OperationName "checkout-issue-$issueId" -Body $body
+    $duration = (Get-Date) - $startTime
+    Write-HeartbeatLog "Successfully checked out issue in $([Math]::Round($duration.TotalSeconds, 2))s" "INFO"
+    Write-Output $response
+} catch {
+    $duration = (Get-Date) - $startTime
+    Write-HeartbeatLog "Failed to checkout issue after $([Math]::Round($duration.TotalSeconds, 2))s: $_" "ERROR"
+    throw $_
+}

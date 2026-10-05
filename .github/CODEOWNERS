@@ -1,0 +1,31 @@
+# CODEOWNERS - Automatic PR reviewer assignment
+# Order matters: files are matched against the first matching pattern
+
+# Default reviewers for unclassified files
+*       @prequal/engineering
+
+# Backend (FastAPI/Python)
+/prequal-platform/api/         @prequal/backend @prequal/engineering
+/prequal-platform/app/         @prequal/backend @prequal/engineering
+/backend/                       @prequal/backend @prequal/engineering
+/tests/                         @prequal/backend @prequal/engineering
+/alembic/                       @prequal/backend @prequal/engineering
+
+# Frontend (React/TypeScript)
+/prequal-platform/src/          @prequal/frontend @prequal/engineering
+/prequal-platform/components/  @prequal/frontend @prequal/engineering
+
+# Infrastructure & DevOps
+/.github/workflows/            @prequal/devops @prequal/engineering
+/docker*.yml                    @prequal/devops @prequal/engineering
+/Dockerfile*                    @prequal/devops @prequal/engineering
+/infrastructure/                @prequal/devops @prequal/engineering
+/terraform/                     @prequal/devops @prequal/engineering
+
+# Security
+/.gitleaks.toml                 @prequal/security @prequal/engineering
+/.semgrep.yml                   @prequal/security @prequal/engineering
+
+# Documentation
+/docs/                          @prequal/engineering
+/*.md                           @prequal/engineering

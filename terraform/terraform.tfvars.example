@@ -1,7 +1,8 @@
 # AWS Account ID - Replace with your actual account ID
 aws_account_id = "123456789012"
 
-# Database password - Replace with a secure password
+# Database password - Replace with a secure password (min 16 chars, mixed case, numbers, symbols)
+# Consider using AWS Secrets Manager instead of hardcoding
 db_password = "change-me-to-secure-password"
 
 # AWS Region
@@ -13,3 +14,9 @@ vpc_cidr = "10.0.0.0/16"
 # Subnet CIDRs
 public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24"]
 private_subnet_cidrs = ["10.0.3.0/24", "10.0.4.0/24"]
+
+# Domain name for SSL certificate (e.g., prequal.example.com)
+domain_name = ""
+
+# Alert email for production monitoring notifications
+alert_email = "alerts@example.com"

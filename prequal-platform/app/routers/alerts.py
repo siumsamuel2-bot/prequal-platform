@@ -33,8 +33,74 @@ from app.schemas.compliance import (
 from app.services.alert_service import scan_expirations, get_alert_summary, deliver_pending_alerts
 from app.services.analytics_pipeline import get_recent_alerts
 from app.routers.auth import get_current_user, TokenData
+from app.models.auth import TeamMember
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
+
+
+# -----------------------------------------------------------------------
+# Tenant isolation helpers (MID-546 / HIGH-3)
+# -----------------------------------------------------------------------
+
+async def _resolve_caller_team_id(
+    db: AsyncSession, current_user: TokenData
+) -> Optional[UUID]:
+    """Resolve the calling user's team for tenant scoping.
+
+    Returns None for admins (unscoped access) and for non-admin users with
+    no team membership — the latter case must be treated as "no access" by the
+    caller, not as "unscoped". Use `_caller_can_see_all` to distinguish.
+
+    The live `team_members` table is the source of truth; the JWT `team_id`
+    claim may be stale if a user has changed teams since token issue.
+    """
+    if getattr(current_user, "role", "viewer") == "admin":
+        return None
+    user_id_str = getattr(current_user, "user_id", None)
+    if not user_id_str:
+        return None
+    result = await db.execute(
+        select(TeamMember.team_id).where(TeamMember.user_id == UUID(user_id_str))
+    )
+    return result.scalar_one_or_none()
+
+
+def _caller_is_admin(current_user: TokenData) -> bool:
+    return getattr(current_user, "role", "viewer") == "admin"
+
+
+def _tenant_alert_predicate(team_id: UUID):
+    """SQL predicate scoping AlertNotification rows to a single team.
+
+    AlertNotification -> Certification -> Subcontractor (team_id).
+    """
+    return AlertNotification.certification_id.in_(
+        select(Certification.id).where(
+            Certification.subcontractor_id.in_(
+                select(Subcontractor.id).where(Subcontractor.team_id == team_id)
+            )
+        )
+    )
+
+
+async def _assert_alert_in_team_scope(
+    db: AsyncSession, team_id: UUID, alert: AlertNotification
+) -> None:
+    """Raise 404 if the alert's certificate chain is outside the caller's team.
+
+    404 (not 403) so existence of cross-tenant alerts is not revealed.
+    """
+    result = await db.execute(
+        select(AlertNotification.id).where(
+            AlertNotification.id == alert.id,
+            _tenant_alert_predicate(team_id),
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found"
+        )
+
 
 
 # -----------------------------------------------------------------------
@@ -110,16 +176,27 @@ async def list_alerts(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    """List all alerts with optional filtering."""
+    """List alerts with optional filtering.
+
+    MID-546 (HIGH-3): tenant isolation. Non-admin users only see alerts whose
+    certification chain belongs to their team. Non-admin users with no team
+    membership see nothing. Admins remain unscoped.
+    """
     query = select(AlertNotification).order_by(desc(AlertNotification.scheduled_for))
 
+    if not _caller_is_admin(current_user):
+        team_id = await _resolve_caller_team_id(db, current_user)
+        if team_id is None:
+            # Non-admin caller with no team: no accessible alerts
+            return []
+        query = query.where(_tenant_alert_predicate(team_id))
     if status_filter:
         query = query.where(AlertNotification.status == status_filter.value)
     if alert_type:
         query = query.where(AlertNotification.alert_type == alert_type)
     if days_until is not None:
         query = query.where(AlertNotification.days_until_expiration == days_until)
-
+    
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
     alerts = result.scalars().all()
@@ -136,7 +213,27 @@ async def get_alerts_by_contractor(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    """Get alerts for a specific contractor (subcontractor)."""
+    """Get alerts for a specific contractor (subcontractor).
+
+    MID-546 (HIGH-3): returns 404 when the contractor is outside the caller's
+    team so cross-tenant enumeration is not possible.
+    """
+    # Tenant isolation: contractor must belong to caller's team (unless admin)
+    if not _caller_is_admin(current_user):
+        team_id = await _resolve_caller_team_id(db, current_user)
+        if team_id is None:
+            return []
+        scope_result = await db.execute(
+            select(Subcontractor.id).where(
+                Subcontractor.id == contractor_id,
+                Subcontractor.team_id == team_id,
+            )
+        )
+        if scope_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Contractor not found"
+            )
+
     # First find all certifications for this contractor
     cert_result = await db.execute(
         select(Certification.id).where(Certification.subcontractor_id == contractor_id)
@@ -171,7 +268,27 @@ async def get_alerts_by_project(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    """Get alerts for a specific project."""
+    """Get alerts for a specific project.
+
+    MID-546 (HIGH-3): returns 404 when the project is outside the caller's team
+    so cross-tenant enumeration is not possible.
+    """
+    # Tenant isolation: project must belong to caller's team (unless admin)
+    if not _caller_is_admin(current_user):
+        team_id = await _resolve_caller_team_id(db, current_user)
+        if team_id is None:
+            return []
+        scope_result = await db.execute(
+            select(Project.id).where(
+                Project.id == project_id,
+                Project.team_id == team_id,
+            )
+        )
+        if scope_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
+            )
+
     # Find all subcontractors on this project
     ps_result = await db.execute(
         select(ProjectSubcontractor.subcontractor_id)
@@ -229,6 +346,16 @@ async def acknowledge_alert(
             detail="Alert not found"
         )
 
+    # MID-546 (HIGH-3): tenant isolation — non-admins may only acknowledge
+    # alerts within their own team's certification chain.
+    if not _caller_is_admin(current_user):
+        team_id = await _resolve_caller_team_id(db, current_user)
+        if team_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found"
+            )
+        await _assert_alert_in_team_scope(db, team_id, alert)
+
     if alert.status == "acknowledged":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -276,8 +403,21 @@ async def get_alerts_summary(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    """Get a summary of alert counts for a time window."""
-    summary = await get_alert_summary(db, days=days)
+    """Get a summary of alert counts for a time window.
+
+    MID-546 (HIGH-3): non-admin callers get counts scoped to their team;
+    admins get the platform-wide view.
+    """
+    team_id = None if _caller_is_admin(current_user) else await _resolve_caller_team_id(db, current_user)
+    if not _caller_is_admin(current_user) and team_id is None:
+        # Non-admin caller with no team: empty, scoped summary
+        return {
+            "pending_alerts": 0,
+            "acknowledged_alerts": 0,
+            "expired_certifications": 0,
+            "lookback_days": days,
+        }
+    summary = await get_alert_summary(db, days=days, team_id=team_id)
     return summary
 
 
@@ -429,6 +569,16 @@ async def alerts_recent(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user),
 ) -> list[dict]:
-    """Return recent alert log entries backed by mv_recent_alerts."""
-    data = await get_recent_alerts(db, status=status, limit=limit, offset=offset)
+    """Return recent alert log entries backed by mv_recent_alerts.
+
+    MID-546 (HIGH-3): non-admin callers are scoped to their team; admins get
+    the platform-wide view.
+    """
+    if _caller_is_admin(current_user):
+        team_id = None
+    else:
+        team_id = await _resolve_caller_team_id(db, current_user)
+        if team_id is None:
+            return []
+    data = await get_recent_alerts(db, status=status, limit=limit, offset=offset, team_id=team_id)
     return [RecentAlert(**row).model_dump() for row in data]

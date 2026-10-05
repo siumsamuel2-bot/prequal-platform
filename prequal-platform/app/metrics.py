@@ -69,6 +69,17 @@ if PROMETHEUS_AVAILABLE:
         'Number of currently blocked IP addresses'
     )
 
+    DDOS_VIOLATIONS = Counter(
+        'ddos_violations_total',
+        'Total number of DDoS protection violations',
+        ['reason']
+    )
+
+    DDOS_CONCURRENT_REQUESTS = Gauge(
+        'ddos_concurrent_requests',
+        'Number of in-flight requests currently tracked per client'
+    )
+
 
 _METRICS_SETUP_DONE = False
 

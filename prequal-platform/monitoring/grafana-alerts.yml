@@ -1,0 +1,416 @@
+# Grafana Alerting Configuration
+# Production alerting rules for Prequal Platform
+# Integrated with Prometheus alerting and notification channels
+
+contactPoints:
+  - orgId: 1
+    name: default-receiver
+    receivers:
+      - uid: email-receiver
+        type: email
+        settings:
+          addresses: devops@company.com
+          singleEmail: false
+      - uid: slack-receiver
+        type: slack
+        settings:
+          recipient: '#alerts'
+          username: Grafana
+          token: ${SLACK_WEBHOOK_URL}
+          mentionUsers: ''
+          mentionGroups: ''
+          mentionChannel: here
+          endpointUrl: ''
+
+policies:
+  - orgId: 1
+    receiver: default-receiver
+    group_by: ['alertname', 'severity']
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      - receiver: email-receiver
+        group_by: ['alertname']
+        matchers:
+          - severity = critical
+        group_wait: 10s
+        repeat_interval: 1h
+      - receiver: email-receiver
+        group_by: ['alertname']
+        matchers:
+          - severity = high
+        group_wait: 1m
+        repeat_interval: 2h
+      - receiver: email-receiver
+        group_by: ['alertname']
+        matchers:
+          - severity = warning
+        group_wait: 5m
+        repeat_interval: 4h
+
+rules:
+  - orgId: 1
+    folder: Prequal Alerts
+    title: Service Down
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 120
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: up{job="prequal-backend"} == 0
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 2m
+    annotations:
+      summary: "Prequal API service is down"
+      description: "The Prequal API service has been unreachable for more than 2 minutes. Immediate action required."
+      severity: critical
+      runbook_url: "https://github.com/yourcompany/prequal/blob/main/docs/DEPLOYMENT_RUNBOOK.md"
+    labels:
+      severity: critical
+      team: platform
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: High Error Rate
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 300
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: NoData
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "High error rate detected"
+      description: "Error rate is above 5% threshold. Check application logs and recent deployments."
+      severity: high
+      runbook_url: "https://github.com/yourcompany/prequal/blob/main/docs/DEPLOYMENT_RUNBOOK.md#troubleshooting"
+    labels:
+      severity: high
+      team: platform
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: High API Latency
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 300
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 0.5
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: NoData
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "High API latency detected"
+      description: "95th percentile latency is above 500ms threshold. Review slow queries and external API calls."
+      severity: medium
+    labels:
+      severity: medium
+      team: platform
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: Database Pool Near Exhaustion
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 300
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: db_pool_active_connections / db_pool_max_connections > 0.8
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: NoData
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "Database connection pool nearly exhausted"
+      description: "Database pool is above 80% utilization. Consider increasing pool size or investigating connection leaks."
+      severity: high
+    labels:
+      severity: high
+      team: platform
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: Disk Space Low
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 600
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: (node_filesystem_size_bytes - node_filesystem_free_bytes) / node_filesystem_size_bytes > 0.8
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: NoData
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "Disk space running low"
+      description: "Disk usage is above 80%. Clean up old logs or expand storage."
+      severity: medium
+    labels:
+      severity: medium
+      team: platform
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: Container Memory Pressure
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 300
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: container_memory_usage_bytes / container_spec_memory_limit_bytes > 0.9
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: NoData
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "Container memory usage critical"
+      description: "Container is using more than 90% of memory limit. Risk of OOM kill."
+      severity: high
+    labels:
+      severity: high
+      team: platform
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: High Request Rate Anomaly
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 300
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: rate(http_requests_total[5m]) > 100
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: NoData
+    execErrState: Alerting
+    for: 5m
+    annotations:
+      summary: "Unusually high request rate"
+      description: "Request rate is above 100 req/s. May indicate traffic spike or potential attack."
+      severity: medium
+    labels:
+      severity: medium
+      team: platform
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: Build Pipeline Failed
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 60
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: ci_pipeline_status{pipeline="production-deployment"} == 0
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: NoData
+    execErrState: Alerting
+    for: 0s
+    annotations:
+      summary: "Production deployment pipeline failed"
+      description: "The production deployment CI/CD pipeline has failed. Check GitHub Actions for details."
+      severity: critical
+    labels:
+      severity: critical
+      team: platform
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: Availability SLO - Error Budget Burning Fast
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 240
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: (sum(rate(http_requests_total{status=~"5.."}[1h])) / sum(rate(http_requests_total[1h]))) / 0.001 > 14.4
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 4m
+    annotations:
+      summary: "Availability SLO error budget burning at critical rate"
+      description: "Error budget is being consumed at 14.4x sustainable rate. Less than 4 minutes of error budget remain. Immediate action required."
+      severity: critical
+      slo: availability
+      runbook_url: "https://github.com/yourcompany/prequal/blob/main/docs/INCIDENT_RESPONSE_PLAN.md"
+    labels:
+      severity: critical
+      team: platform
+      slo: availability
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: Availability SLO - Error Budget Burning
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 900
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: (sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))) / 0.001 > 6
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: NoData
+    execErrState: Alerting
+    for: 15m
+    annotations:
+      summary: "Availability SLO error budget is being consumed"
+      description: "Error budget consumed at 6x sustainable rate. At this pace, the 30-day error budget will be exhausted in approximately 5 days."
+      severity: warning
+      slo: availability
+      runbook_url: "https://github.com/yourcompany/prequal/blob/main/docs/INCIDENT_RESPONSE_PLAN.md"
+    labels:
+      severity: warning
+      team: platform
+      slo: availability
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: Latency SLO - Budget Burning Fast
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 240
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: (sum(rate(http_request_duration_seconds_bucket{le="0.5"}[1h])) / sum(rate(http_request_duration_seconds_count[1h]))) < 0.99
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: Alerting
+    execErrState: Alerting
+    for: 4m
+    annotations:
+      summary: "Latency SLO error budget burning at critical rate"
+      description: "Less than 99% of requests are within the 500ms p95 threshold. Error budget is being consumed at a critical rate."
+      severity: critical
+      slo: latency
+      runbook_url: "https://github.com/yourcompany/prequal/blob/main/docs/INCIDENT_RESPONSE_PLAN.md"
+    labels:
+      severity: critical
+      team: platform
+      slo: latency
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: API p95 Latency Exceeds 1 Second
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 600
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1.0
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: NoData
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "API p95 latency exceeds 1 second"
+      description: "95th percentile latency is above 1 second. This is approaching the SLO threshold and may indicate slow database queries or external API bottlenecks."
+      severity: warning
+      slo: latency
+      runbook_url: "https://github.com/yourcompany/prequal/blob/main/docs/INCIDENT_RESPONSE_PLAN.md"
+    labels:
+      severity: warning
+      team: platform
+      slo: latency
+    isPaused: false
+
+  - orgId: 1
+    folder: Prequal Alerts
+    title: High Client Error Rate (4xx)
+    condition: A
+    data:
+      - refId: A
+        relativeTimeRange:
+          from: 600
+          to: 0
+        datasourceUid: prometheus
+        model:
+          expr: rate(http_requests_total{status=~"4.."}[5m]) / rate(http_requests_total[5m]) > 0.10
+          intervalMs: 15000
+          maxDataPoints: 43200
+          refId: A
+    noDataState: NoData
+    execErrState: Alerting
+    for: 10m
+    annotations:
+      summary: "High client error rate (4xx)"
+      description: "4xx error rate is above 10%. This may indicate client bugs, invalid API usage, or authentication issues affecting users."
+      severity: warning
+    labels:
+      severity: warning
+      team: platform
+    isPaused: false

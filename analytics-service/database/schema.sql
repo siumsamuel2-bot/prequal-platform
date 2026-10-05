@@ -110,3 +110,46 @@ GROUP BY service_name, metric_name, metric_unit
 ORDER BY service_name, metric_name;
 
 CREATE UNIQUE INDEX idx_mv_system_health_service_metric ON mv_system_health_summary(service_name, metric_name);
+
+-- ---------------------------------------------------------------------------
+-- 6. Data Quality Monitoring (MID-626)
+-- ---------------------------------------------------------------------------
+-- Internal alert records only (no external notification delivery).
+-- Archive tables are insert-only; retention never deletes source rows.
+
+CREATE TABLE IF NOT EXISTS data_quality_alerts (
+    id VARCHAR(36) PRIMARY KEY,
+    alert_type VARCHAR(100) NOT NULL,
+    severity VARCHAR(50) NOT NULL,
+    source_table VARCHAR(100),
+    message VARCHAR(1000) NOT NULL,
+    threshold_value FLOAT,
+    actual_value FLOAT,
+    is_acknowledged INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_dq_alerts_created ON data_quality_alerts(created_at);
+CREATE INDEX IF NOT EXISTS idx_dq_alerts_type ON data_quality_alerts(alert_type);
+CREATE INDEX IF NOT EXISTS idx_dq_alerts_severity ON data_quality_alerts(severity);
+
+CREATE TABLE IF NOT EXISTS analytics_events_archive (
+    id VARCHAR(36) PRIMARY KEY,
+    event_type VARCHAR(50) NOT NULL,
+    user_id VARCHAR(64),
+    organization_id VARCHAR(64),
+    event_metadata JSONB,
+    source_service VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE,
+    archived_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS feature_usage_events_archive (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(64),
+    feature_name VARCHAR(100) NOT NULL,
+    event_type VARCHAR(50) NOT NULL,
+    event_metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE,
+    archived_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);

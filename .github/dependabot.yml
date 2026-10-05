@@ -1,0 +1,61 @@
+version: 2
+updates:
+  # --- Python services (pip) ---
+  - package-ecosystem: pip
+    directory: /prequal-platform
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels: [dependencies, security]
+    groups:
+      python-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+  - package-ecosystem: pip
+    directory: /identity-service
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, security]
+  - package-ecosystem: pip
+    directory: /analytics-service
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, security]
+  - package-ecosystem: pip
+    directory: /codedeploy-hooks
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, security]
+
+  # --- Frontend (npm/pnpm) ---
+  - package-ecosystem: npm
+    directory: /prequal-platform
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels: [dependencies, security]
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types: [minor, patch]
+
+  # --- GitHub Actions ---
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, ci]
+
+  # --- Docker ---
+  - package-ecosystem: docker
+    directory: /prequal-platform
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies, docker]

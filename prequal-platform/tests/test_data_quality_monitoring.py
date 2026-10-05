@@ -26,6 +26,13 @@ from app.services.data_quality_monitoring import (
     archive_old_data_quality_results,
     log_pipeline_performance,
     refresh_data_quality_views,
+    get_field_quality_metrics,
+    get_field_quality_trends,
+    detect_schema_drift,
+    detect_volume_anomalies,
+    check_freshness_sla,
+    get_source_health,
+    collect_data_quality_metrics,
 )
 
 
@@ -256,3 +263,375 @@ async def test_log_pipeline_performance(db: AsyncSession):
 async def test_refresh_data_quality_views(db: AsyncSession):
     # Should not raise; we can't easily verify contents without running the migration
     await refresh_data_quality_views(db)
+
+
+# ---------------------------------------------------------------------------
+# 6. Field-Level Quality Metrics (MID-605)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_field_quality_metrics_structure(db: AsyncSession):
+    result = await get_field_quality_metrics(db, persist=False)
+    assert "captured_at" in result
+    assert "fields" in result
+    assert "spikes" in result
+    spec_labels = {(s["table_name"], s["column_name"]) for s in result["fields"]}
+    # All configured critical fields are reported
+    assert ("subcontractors", "ein") in spec_labels
+    assert ("certifications", "certification_number") in spec_labels
+    assert ("certifications", "expiration_date") in spec_labels
+    assert ("state_credential_records", "credential_number") in spec_labels
+    for f in result["fields"]:
+        assert 0.0 <= f["null_rate"] <= 1.0
+        assert 0.0 <= f["duplicate_rate"] <= 1.0
+
+
+@pytest.mark.asyncio
+async def test_get_field_quality_metrics_detects_nulls_and_persists(db: AsyncSession):
+    # Seed a subcontractor with and without EIN
+    await db.execute(
+        text(
+            """
+            INSERT INTO subcontractors (id, company_name, email, country, ein, status, created_at, updated_at)
+            VALUES (:id1, 'Null EIN Sub', 'nullein@example.com', 'USA', NULL, 'active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        ),
+        {"id1": str(uuid4())},
+    )
+    await db.commit()
+
+    result = await get_field_quality_metrics(db, persist=True)
+    ein_field = next(
+        f for f in result["fields"]
+        if f["table_name"] == "subcontractors" and f["column_name"] == "ein"
+    )
+    assert ein_field["null_count"] >= 1
+    assert ein_field["null_rate"] > 0
+
+    # Snapshot row was persisted for trend history
+    count = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM data_quality_field_metrics WHERE table_name='subcontractors' AND column_name='ein'")
+        )
+    ).scalar()
+    assert count >= 1
+
+
+@pytest.mark.asyncio
+async def test_get_field_quality_trends(db: AsyncSession):
+    await get_field_quality_metrics(db, persist=True)
+    trends = await get_field_quality_trends(db, days=30)
+    assert trends["period_days"] == 30
+    assert isinstance(trends["series"], list)
+    assert len(trends["series"]) >= 1
+    assert "points" in trends["series"][0]
+
+
+# ---------------------------------------------------------------------------
+# 7. Schema Drift Detection (MID-605)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_detect_schema_drift_baseline_then_stable(db: AsyncSession):
+    # First call creates/updates snapshots (may be a baseline or a no-drift
+    # comparison against an earlier snapshot from this test session)
+    first = await detect_schema_drift(db, persist=True)
+    assert len(first["tables"]) >= 1
+    assert any(t["table_name"] == "subcontractors" for t in first["tables"])
+
+    # Second run compares against the baseline; schema unchanged -> no drift
+    second = await detect_schema_drift(db, persist=True)
+    assert second["drift_detected"] is False
+    assert all(
+        t["added_columns"] == [] and t["removed_columns"] == [] for t in second["tables"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_schema_snapshots_persisted(db: AsyncSession):
+    await detect_schema_drift(db, persist=True)
+    count = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM data_quality_schema_snapshots WHERE table_name='certifications'")
+        )
+    ).scalar()
+    assert count >= 1
+
+
+# ---------------------------------------------------------------------------
+# 8. Volume Anomaly Detection & Freshness SLA (MID-605)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_detect_volume_anomalies_flags_row_count_drop(db: AsyncSession):
+    job = "anomaly_test_job"
+    # Three historical runs around 1000 records, then a sudden drop to 100
+    for i, records in enumerate([1000, 1050, 980]):
+        await db.execute(
+            text(
+                """
+                INSERT INTO sync_run_logs
+                (id, job_name, job_type, status, triggered_by, started_at, completed_at,
+                 records_processed, records_inserted, records_updated, records_failed,
+                 created_at, updated_at)
+                VALUES (:id, :job, 'test', 'completed', 'test',
+                        :ts, :ts, :recs, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            ),
+            {
+                "id": str(uuid4()),
+                "job": job,
+                "ts": datetime.utcnow() - timedelta(hours=48 - i * 24),
+                "recs": records,
+            },
+        )
+    await db.execute(
+        text(
+            """
+            INSERT INTO sync_run_logs
+            (id, job_name, job_type, status, triggered_by, started_at, completed_at,
+             records_processed, records_inserted, records_updated, records_failed,
+             created_at, updated_at)
+            VALUES (:id, :job, 'test', 'completed', 'test',
+                    :ts, :ts, :recs, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        ),
+        {
+            "id": str(uuid4()),
+            "job": job,
+            "ts": datetime.utcnow(),
+            "recs": 100,  # >50% drop vs ~1010 baseline
+        },
+    )
+    await db.commit()
+
+    result = await detect_volume_anomalies(db)
+    anomaly = next((a for a in result["anomalies"] if a["job_name"] == job), None)
+    assert anomaly is not None
+    assert anomaly["latest_records"] == 100
+    assert anomaly["drop_pct"] > 0.50
+
+
+@pytest.mark.asyncio
+async def test_detect_volume_anomalies_stable_job_no_alerts(db: AsyncSession):
+    job = "stable_test_job"
+    for i, records in enumerate([500, 510, 495, 505]):
+        await db.execute(
+            text(
+                """
+                INSERT INTO sync_run_logs
+                (id, job_name, job_type, status, triggered_by, started_at, completed_at,
+                 records_processed, records_inserted, records_updated, records_failed,
+                 created_at, updated_at)
+                VALUES (:id, :job, 'test', 'completed', 'test',
+                        :ts, :ts, :recs, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """
+            ),
+            {
+                "id": str(uuid4()),
+                "job": job,
+                "ts": datetime.utcnow() - timedelta(hours=72 - i * 24),
+                "recs": records,
+            },
+        )
+    await db.commit()
+
+    result = await detect_volume_anomalies(db)
+    assert all(a["job_name"] != job for a in result["anomalies"])
+
+
+@pytest.mark.asyncio
+async def test_check_freshness_sla_breach(db: AsyncSession):
+    job = "stale_test_job"
+    # Last successful run 48h ago -> breaches the 24h SLA
+    await db.execute(
+        text(
+            """
+            INSERT INTO sync_run_logs
+            (id, job_name, job_type, status, triggered_by, started_at, completed_at,
+             records_processed, records_inserted, records_updated, records_failed,
+             created_at, updated_at)
+            VALUES (:id, :job, 'test', 'completed', 'test',
+                    :ts, :ts, 10, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """
+        ),
+        {"id": str(uuid4()), "job": job, "ts": datetime.utcnow() - timedelta(hours=48)},
+    )
+    await db.commit()
+
+    result = await check_freshness_sla(db, sla_hours=24)
+    source = next((s for s in result["sources"] if s["job_name"] == job), None)
+    assert source is not None
+    assert source["breached"] is True
+    assert source["age_hours"] >= 48
+
+
+@pytest.mark.asyncio
+async def test_get_source_health_structure(db: AsyncSession):
+    result = await get_source_health(db, days=7)
+    assert result["overall"] in ("healthy", "degraded", "down")
+    for source in result["sources"]:
+        assert source["status"] in ("healthy", "degraded", "down")
+        assert "source" in source
+        assert "error_rate" in source
+
+
+@pytest.mark.asyncio
+async def test_collect_data_quality_metrics_readonly_snapshot(db: AsyncSession):
+    snapshot = await collect_data_quality_metrics(db, days=7)
+    for key in (
+        "generated_at",
+        "sync_health",
+        "match_accuracy",
+        "error_rates",
+        "stale_data",
+        "field_quality",
+        "schema_drift",
+        "volume_anomalies",
+        "freshness",
+        "source_health",
+    ):
+        assert key in snapshot, f"missing key: {key}"
+
+
+# ---------------------------------------------------------------------------
+# 9. Extended Threshold Evaluation (MID-605)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_evaluate_thresholds_triggers_high_null_rate(db: AsyncSession):
+    metrics = {
+        "match_accuracy": {"sources": []},
+        "error_rates": {"jobs": []},
+        "stale_data": {"total_stale_osha": 0, "total_stale_state": 0},
+        "sync_health": {"period_days": 7, "jobs": []},
+        "field_quality": {
+            "fields": [
+                {
+                    "table_name": "subcontractors",
+                    "column_name": "ein",
+                    "total_rows": 100,
+                    "null_count": 25,
+                    "null_rate": 0.25,
+                    "duplicate_count": 0,
+                    "duplicate_rate": 0.0,
+                }
+            ],
+            "spikes": [],
+        },
+    }
+    alerts = await evaluate_thresholds(db, metrics)
+    null_alerts = [a for a in alerts if a["alert_type"] == "high_null_rate"]
+    assert len(null_alerts) == 1
+    assert null_alerts[0]["source_table"] == "subcontractors"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_thresholds_triggers_null_rate_spike(db: AsyncSession):
+    metrics = {
+        "match_accuracy": {"sources": []},
+        "error_rates": {"jobs": []},
+        "stale_data": {"total_stale_osha": 0, "total_stale_state": 0},
+        "sync_health": {"period_days": 7, "jobs": []},
+        "field_quality": {
+            "fields": [],
+            "spikes": [
+                {
+                    "table_name": "certifications",
+                    "column_name": "certification_number",
+                    "previous_null_rate": 0.02,
+                    "current_null_rate": 0.30,
+                }
+            ],
+        },
+    }
+    alerts = await evaluate_thresholds(db, metrics)
+    spike_alerts = [a for a in alerts if a["alert_type"] == "null_rate_spike"]
+    assert len(spike_alerts) == 1
+    assert spike_alerts[0]["severity"] == "error"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_thresholds_triggers_row_count_drop(db: AsyncSession):
+    metrics = {
+        "match_accuracy": {"sources": []},
+        "error_rates": {"jobs": []},
+        "stale_data": {"total_stale_osha": 0, "total_stale_state": 0},
+        "sync_health": {"period_days": 7, "jobs": []},
+        "volume_anomalies": {
+            "anomalies": [
+                {
+                    "job_name": "osha_daily_sync",
+                    "latest_records": 100,
+                    "baseline_avg_records": 1000,
+                    "drop_pct": 0.90,
+                }
+            ]
+        },
+    }
+    alerts = await evaluate_thresholds(db, metrics)
+    drop_alerts = [a for a in alerts if a["alert_type"] == "row_count_drop"]
+    assert len(drop_alerts) == 1
+    assert drop_alerts[0]["source_job"] == "osha_daily_sync"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_thresholds_triggers_freshness_sla_breach(db: AsyncSession):
+    metrics = {
+        "match_accuracy": {"sources": []},
+        "error_rates": {"jobs": []},
+        "stale_data": {"total_stale_osha": 0, "total_stale_state": 0},
+        "sync_health": {"period_days": 7, "jobs": []},
+        "freshness": {
+            "sla_hours": 24,
+            "sources": [
+                {
+                    "job_name": "osha_daily_sync",
+                    "last_successful_sync": None,
+                    "age_hours": 30.0,
+                    "breached": True,
+                }
+            ],
+        },
+    }
+    alerts = await evaluate_thresholds(db, metrics)
+    sla_alerts = [a for a in alerts if a["alert_type"] == "freshness_sla_breach"]
+    assert len(sla_alerts) == 1
+
+
+@pytest.mark.asyncio
+async def test_evaluate_thresholds_triggers_schema_change(db: AsyncSession):
+    metrics = {
+        "match_accuracy": {"sources": []},
+        "error_rates": {"jobs": []},
+        "stale_data": {"total_stale_osha": 0, "total_stale_state": 0},
+        "sync_health": {"period_days": 7, "jobs": []},
+        "schema_drift": {
+            "drift_detected": True,
+            "tables": [
+                {
+                    "table_name": "violations",
+                    "column_count": 30,
+                    "added_columns": ["new_col"],
+                    "removed_columns": [],
+                    "baseline": False,
+                }
+            ],
+        },
+    }
+    alerts = await evaluate_thresholds(db, metrics)
+    schema_alerts = [a for a in alerts if a["alert_type"] == "schema_change"]
+    assert len(schema_alerts) == 1
+    assert schema_alerts[0]["source_table"] == "violations"
+
+
+@pytest.mark.asyncio
+async def test_run_data_quality_health_check_includes_mid605_metrics(db: AsyncSession):
+    result = await run_data_quality_health_check(db)
+    for key in (
+        "field_quality",
+        "schema_drift",
+        "volume_anomalies",
+        "freshness",
+    ):
+        assert key in result["metrics"], f"missing metric: {key}"

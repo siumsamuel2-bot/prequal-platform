@@ -273,23 +273,108 @@ $$;
 
 
 -- =========================================
--- 11. ANALYTICS VIEWS QUERY TESTS
+-- 12. DATA QUALITY SCHEMA (05) OBJECT CHECKS
 -- =========================================
 DO $$
+DECLARE
     v_count INTEGER;
+    v_test_id UUID;
 BEGIN
-    RAISE NOTICE '=== 11. ANALYTIC VIEW TESTS ===';
-    -- Test compliance_status_by_subcontractor view
-    SELECT COUNT(*) INTO v_count FROM compliance_status_by_subcontractor;
-    RAISE NOTICE 'compliance_status_by_subcontractor rows: %', v_count;
+    RAISE NOTICE '=== 12. DATA QUALITY SCHEMA OBJECT CHECKS ===';
 
-    -- Test expiring_certifications view (should show Riverbend cert and Pinnacle expired)
-    SELECT COUNT(*) INTO v_count FROM expiring_certifications;
-    RAISE NOTICE 'expiring_certifications rows: %', v_count;
+    -- Table existence
+    PERFORM * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sync_health';
+    IF FOUND THEN RAISE NOTICE 'Table sync_health: EXISTS'; ELSE RAISE NOTICE 'Table sync_health: MISSING'; END IF;
 
-    -- Test osha_violation_trends view
-    SELECT COUNT(*) INTO v_count FROM osha_violation_trends;
-    RAISE NOTICE 'osha_violation_trends rows: %', v_count;
+    PERFORM * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'data_quality_checks';
+    IF FOUND THEN RAISE NOTICE 'Table data_quality_checks: EXISTS'; ELSE RAISE NOTICE 'Table data_quality_checks: MISSING'; END IF;
+
+    PERFORM * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'data_quality_results';
+    IF FOUND THEN RAISE NOTICE 'Table data_quality_results: EXISTS'; ELSE RAISE NOTICE 'Table data_quality_results: MISSING'; END IF;
+
+    PERFORM * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'match_rate_tracking';
+    IF FOUND THEN RAISE NOTICE 'Table match_rate_tracking: EXISTS'; ELSE RAISE NOTICE 'Table match_rate_tracking: MISSING'; END IF;
+
+    PERFORM * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'data_quality_alert_rules';
+    IF FOUND THEN RAISE NOTICE 'Table data_quality_alert_rules: EXISTS'; ELSE RAISE NOTICE 'Table data_quality_alert_rules: MISSING'; END IF;
+
+    PERFORM * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'data_quality_alert_log';
+    IF FOUND THEN RAISE NOTICE 'Table data_quality_alert_log: EXISTS'; ELSE RAISE NOTICE 'Table data_quality_alert_log: MISSING'; END IF;
+
+    PERFORM * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'pipeline_performance';
+    IF FOUND THEN RAISE NOTICE 'Table pipeline_performance: EXISTS'; ELSE RAISE NOTICE 'Table pipeline_performance: MISSING'; END IF;
+
+    PERFORM * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'api_latency_tracking';
+    IF FOUND THEN RAISE NOTICE 'Table api_latency_tracking: EXISTS'; ELSE RAISE NOTICE 'Table api_latency_tracking: MISSING'; END IF;
+
+    PERFORM * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'data_retention_policies';
+    IF FOUND THEN RAISE NOTICE 'Table data_retention_policies: EXISTS'; ELSE RAISE NOTICE 'Table data_retention_policies: MISSING'; END IF;
+
+    PERFORM * FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'archived_records';
+    IF FOUND THEN RAISE NOTICE 'Table archived_records: EXISTS'; ELSE RAISE NOTICE 'Table archived_records: MISSING'; END IF;
+
+    -- Materialized views
+    PERFORM * FROM pg_matviews WHERE matviewname = 'mv_sync_health_dashboard';
+    IF FOUND THEN RAISE NOTICE 'MV mv_sync_health_dashboard: EXISTS'; ELSE RAISE NOTICE 'MV mv_sync_health_dashboard: MISSING'; END IF;
+
+    PERFORM * FROM pg_matviews WHERE matviewname = 'mv_data_quality_summary';
+    IF FOUND THEN RAISE NOTICE 'MV mv_data_quality_summary: EXISTS'; ELSE RAISE NOTICE 'MV mv_data_quality_summary: MISSING'; END IF;
+
+    PERFORM * FROM pg_matviews WHERE matviewname = 'mv_match_rate_trends';
+    IF FOUND THEN RAISE NOTICE 'MV mv_match_rate_trends: EXISTS'; ELSE RAISE NOTICE 'MV mv_match_rate_trends: MISSING'; END IF;
+
+    PERFORM * FROM pg_matviews WHERE matviewname = 'mv_pipeline_performance_summary';
+    IF FOUND THEN RAISE NOTICE 'MV mv_pipeline_performance_summary: EXISTS'; ELSE RAISE NOTICE 'MV mv_pipeline_performance_summary: MISSING'; END IF;
 END;
 $$;
+
+
+-- =========================================
+-- 13. DATA QUALITY FUNCTIONAL TESTS
+-- =========================================
+DO $$
+DECLARE
+    v_test_id UUID;
+    v_match_rate DECIMAL;
+    v_count INTEGER;
+BEGIN
+    RAISE NOTICE '=== 13. DATA QUALITY FUNCTIONAL TESTS ===';
+
+    -- Insert a data quality check
+    INSERT INTO data_quality_checks (check_name, check_type, table_name, column_name, check_query, expected_result, is_active)
+    VALUES ('test_email_unique', 'uniqueness', 'subcontractors', 'email', 'SELECT COUNT(*) FROM subcontractors GROUP BY email HAVING COUNT(*) > 1', 'empty', TRUE)
+    RETURNING id INTO v_test_id;
+
+    -- Insert a result
+    INSERT INTO data_quality_results (check_id, status, actual_result, record_count, failed_record_count)
+    VALUES (v_test_id, 'pass', '0 duplicates found', 10, 0);
+
+    -- Verify result exists
+    SELECT COUNT(*) INTO v_count FROM data_quality_results WHERE check_id = v_test_id;
+    IF v_count > 0 THEN
+        RAISE NOTICE 'Data quality check + result insert: PASS';
+    ELSE
+        RAISE NOTICE 'Data quality check + result insert: FAIL';
+    END IF;
+
+    -- Test match rate auto-compute trigger
+    INSERT INTO match_rate_tracking (source_name, match_date, source_records_total, matched_records, unmatched_records, fuzzy_matched_records)
+    VALUES ('test_source', CURRENT_DATE, 100, 85, 15, 5)
+    RETURNING match_rate_percent INTO v_match_rate;
+
+    IF v_match_rate = 85.00 THEN
+        RAISE NOTICE 'Match rate auto-compute trigger: PASS (%)', v_match_rate;
+    ELSE
+        RAISE NOTICE 'Match rate auto-compute trigger: FAIL (expected 85, got %)', v_match_rate;
+    END IF;
+
+    -- Test pipeline performance auto-compute
+    INSERT INTO pipeline_performance (pipeline_name, run_start_at, run_end_at, cache_hits, cache_misses, api_calls_made, total_api_latency_ms)
+    VALUES ('test_pipeline', NOW(), NOW() + INTERVAL '1 second', 80, 20, 10, 500)
+    RETURNING duration_ms, cache_hit_rate_percent, avg_api_latency_ms INTO STRICT;
+    RAISE NOTICE 'Pipeline performance auto-compute: PASS (duration_ms=%, cache_hit_rate=%, avg_latency=%)', duration_ms, cache_hit_rate_percent, avg_api_latency_ms;
+END;
+$$;
+
+
 

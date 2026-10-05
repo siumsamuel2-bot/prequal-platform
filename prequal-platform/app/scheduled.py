@@ -131,6 +131,14 @@ async def _run_data_quality_checks() -> None:
                 f"stale_runs_cleaned={checks.get('stale_runs_cleaned')}, "
                 f"stale_running_jobs={checks.get('stale_running_jobs')}, "
                 f"failed_jobs_7d={checks.get('failed_jobs_last_7d')}")
+            # MID-605: run the full monitoring suite (field quality, schema
+            # drift, volume anomalies, freshness SLA, threshold alerts).
+            from app.services.data_quality_monitoring import run_data_quality_health_check
+            monitoring = await run_data_quality_health_check(db)
+            logger.info(
+                "Data quality monitoring complete: %d alerts triggered",
+                len(monitoring.get("alerts_triggered", [])),
+            )
     except Exception as exc:
         logger.exception("Data quality checks failed: %s", exc)
 

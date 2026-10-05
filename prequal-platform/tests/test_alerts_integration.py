@@ -22,13 +22,20 @@ from app.models.compliance import (
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture
-async def seeded_db() -> AsyncSession:
-    """Create a fresh seeded DB session for a single test."""
+async def seeded_db(db_engine) -> AsyncSession:
+    """Create a fresh seeded DB session for a single test.
+
+    Depends on the session-scoped ``db_engine`` fixture so the SQLite
+    schema (including the ``subcontractors`` table) is created before the
+    seed data is flushed.
+    """
     async with AsyncSessionLocal() as session:
-        # Create subcontractor
+        # Create subcontractor with unique email per test run so that
+        # UNIQUE constraint on email does not clash across sequential tests.
+        unique_suffix = uuid4().hex[:8]
         sub = Subcontractor(
             company_name="Acme Construction",
-            email="acme@example.com",
+            email=f"acme-{unique_suffix}@example.com",
             phone="555-0100",
             address_line1="123 Main St",
             city="Austin",
@@ -37,12 +44,11 @@ async def seeded_db() -> AsyncSession:
             status="active",
         )
         session.add(sub)
-        await session.flush()
 
         # Create a project
         proj = Project(
             project_name="Downtown Tower",
-            project_number="DT-2026",
+            project_number=f"DT-2026-{unique_suffix}",
             client_name="Big Client Corp",
             start_date=date.today() - timedelta(days=30),
             status="active",
@@ -99,10 +105,12 @@ async def seeded_db() -> AsyncSession:
         )
         session.add(cert_expired)
 
-        await session.commit()
+        # Use begin_nested() so that rollback() undoes only this fixture's
+        # changes (savepoint) while keeping the outer session transaction
+        # intact for the test's own use.
+        await session.begin_nested()
 
         # Attach for test access
-        session._sub = sub  # type: ignore[attr-defined]
         session._proj = proj  # type: ignore[attr-defined]
         session._cert_30 = cert_30  # type: ignore[attr-defined]
         session._cert_14 = cert_14  # type: ignore[attr-defined]

@@ -1,5 +1,6 @@
+# syntax=docker/dockerfile:1
 # Dockerfile for Prequal Platform
-# Multi-stage build for Node.js application
+# Multi-stage build for Node.js application with optimized caching
 
 # Stage 1: Build
 FROM node:18-alpine AS builder
@@ -7,11 +8,12 @@ FROM node:18-alpine AS builder
 # Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Copy package files first for better layer caching
+COPY package*.json package-lock.json* ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies with cache mount for faster rebuilds
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
 
 # Copy source code
 COPY . .
@@ -29,12 +31,13 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
 
-# Install production dependencies only
-RUN npm ci --only=production
+# Install production dependencies only with cache mount
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --only=production
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nextjs -u 1001
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nextjs -u 1001
 USER nextjs
 
 # Expose port

@@ -20,16 +20,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from app.services.external_compliance_pipeline import (
     MatchResult,
+    OSHARecordValidationError,
+    check_batch_health,
+    get_pipeline_health_summary,
     match_subcontractor,
     normalize_company_name,
     parse_date,
     parse_decimal,
     map_status,
+    validate_osha_case_record,
     PipelineRun,
     run_state_credential_sync,
     cleanup_stale_runs,
     validate_pipeline_health,
     STALE_RUN_TIMEOUT_HOURS,
+    BATCH_LATENCY_MAX_MS,
 )
 from app.services.state_scrapers.base import ScrapedCredentialRecord
 
@@ -440,6 +445,212 @@ class TestSTALE_RUN_TIMEOUT_HOURS:
     def test_stale_timeout_config_default(self):
         """STALE_RUN_TIMEOUT_HOURS should default to 2 hours for faster failure detection."""
         assert STALE_RUN_TIMEOUT_HOURS == 2
+
+
+# ---------------------------------------------------------------------------
+# 8. OSHA record validation gate (MID-613)
+# ---------------------------------------------------------------------------
+
+
+class TestValidateOSHARecord:
+    VALID = {
+        "id": "12345678-abcd-1234-efgh-123456789012",
+        "company_name": "Acme Construction, Inc.",
+        "date_opened": "2024-01-15",
+        "penalty_amount": "12500.00",
+        "gravity_score": "10",
+    }
+
+    def test_valid_record_returns_canonical_id(self):
+        assert validate_osha_case_record(self.VALID) == self.VALID["id"]
+
+    def test_accepts_violation_id_fallback(self):
+        rec = {**self.VALID, "id": None, "violation_id": "VIOL-1"}
+        assert validate_osha_case_record(rec) == "VIOL-1"
+
+    def test_missing_id_rejected(self):
+        with pytest.raises(OSHARecordValidationError):
+            validate_osha_case_record({"company_name": "Acme"})
+
+    def test_oversized_id_rejected(self):
+        with pytest.raises(OSHARecordValidationError):
+            validate_osha_case_record({**self.VALID, "id": "x" * 65})
+
+    def test_no_identity_signal_rejected(self):
+        rec = {**self.VALID}
+        rec.pop("company_name")
+        with pytest.raises(OSHARecordValidationError):
+            validate_osha_case_record(rec)
+
+    def test_ein_counts_as_identity(self):
+        rec = {**self.VALID}
+        rec.pop("company_name")
+        rec["ein"] = "12-3456789"
+        assert validate_osha_case_record(rec) == self.VALID["id"]
+
+    def test_unparseable_date_rejected(self):
+        with pytest.raises(OSHARecordValidationError):
+            validate_osha_case_record({**self.VALID, "date_opened": "13/45/2024"})
+
+    def test_slash_format_date_accepted(self):
+        assert validate_osha_case_record({**self.VALID, "date_opened": "01/15/2024"})
+
+    def test_negative_penalty_rejected(self):
+        with pytest.raises(OSHARecordValidationError):
+            validate_osha_case_record({**self.VALID, "penalty_amount": "-5"})
+
+    def test_non_numeric_gravity_rejected(self):
+        with pytest.raises(OSHARecordValidationError):
+            validate_osha_case_record({**self.VALID, "gravity_score": "high"})
+
+    def test_missing_optional_fields_accepted(self):
+        rec = {"id": "12345678", "company_name": "Acme"}
+        assert validate_osha_case_record(rec) == "12345678"
+
+
+# ---------------------------------------------------------------------------
+# 9. Match threshold enforcement (MID-613)
+# ---------------------------------------------------------------------------
+
+
+class TestMatchThreshold:
+    def test_ein_match_meets_threshold(self):
+        m = MatchResult(subcontractor_id=uuid.uuid4(), match_score=1.0, match_method="ein")
+        assert m.meets_threshold() is True
+
+    def test_no_match_fails_threshold(self):
+        m = MatchResult(match_score=0.0, match_method="none")
+        assert m.meets_threshold() is False
+
+    def test_low_score_fails_threshold(self):
+        m = MatchResult(subcontractor_id=uuid.uuid4(), match_score=0.5, match_method="name")
+        assert m.meets_threshold() is False
+
+    def test_custom_threshold(self):
+        m = MatchResult(subcontractor_id=uuid.uuid4(), match_score=0.8, match_method="name")
+        assert m.meets_threshold(0.8) is True
+        assert m.meets_threshold(0.95) is False
+
+
+# ---------------------------------------------------------------------------
+# 10. Batch health and pipeline summary (MID-613)
+# ---------------------------------------------------------------------------
+
+
+def _batch_mock_db(runs):
+    """Build a mock AsyncSession returning the given sync_run_logs rows."""
+    mock_db = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.mappings.return_value = MagicMock()
+    mock_result.mappings.return_value.all.return_value = runs
+    mock_db.execute.return_value = mock_result
+    return mock_db
+
+
+class TestCheckBatchHealth:
+    @pytest.mark.asyncio
+    async def test_computes_metrics_from_rows(self):
+        now = datetime.now()
+        runs = [
+            {
+                "job_name": "osha_daily_sync",
+                "records_processed": 1000,
+                "started_at": now,
+                "completed_at": now,  # zero duration -> excluded from throughput avg
+            },
+            {
+                "job_name": "osha_daily_sync",
+                "records_processed": 1000,
+                "started_at": now,
+                "completed_at": now.replace(microsecond=0) if False else now,  # keep simple
+            },
+        ]
+        # Give one run a real 10-second duration
+        from datetime import timedelta as _td
+        runs[0]["completed_at"] = now + _td(seconds=10)
+
+        summary = await check_batch_health(_batch_mock_db(runs), days=7)
+        metrics = summary["metrics"]["osha_daily_sync"]
+        assert metrics["runs"] == 2
+        assert metrics["total_records"] == 2000
+        assert metrics["avg_throughput_rps"] == 100.0
+        assert metrics["avg_duration_sec"] == 10.0
+
+    @pytest.mark.asyncio
+    async def test_latency_alert_fires(self):
+        now = datetime.now()
+        from datetime import timedelta as _td
+        slow_duration = BATCH_LATENCY_MAX_MS / 1000 + 10.0
+        runs = [
+            {
+                "job_name": "state_creds_CA",
+                "records_processed": 100_000,  # high throughput, no throughput alert
+                "started_at": now,
+                "completed_at": now + _td(seconds=slow_duration),
+            },
+        ]
+        summary = await check_batch_health(_batch_mock_db(runs), days=7)
+        latency_alerts = [a for a in summary["alerts"] if a["alert_type"] == "batch_latency_high"]
+        assert len(latency_alerts) == 1
+        assert latency_alerts[0]["job_name"] == "state_creds_CA"
+        assert latency_alerts[0]["severity"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_throughput_alert_fires(self):
+        now = datetime.now()
+        from datetime import timedelta as _td
+        runs = [
+            {
+                "job_name": "osha_daily_sync",
+                "records_processed": 5,
+                "started_at": now,
+                "completed_at": now + _td(seconds=10),  # 0.5 rec/sec << threshold
+            },
+        ]
+        summary = await check_batch_health(_batch_mock_db(runs), days=7)
+        tput = [a for a in summary["alerts"] if a["alert_type"] == "batch_throughput_low"]
+        assert len(tput) == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_period_no_alerts(self):
+        summary = await check_batch_health(_batch_mock_db([]), days=7)
+        assert summary["metrics"] == {}
+        assert summary["alerts"] == []
+
+
+class TestGetPipelineHealthSummary:
+    @pytest.mark.asyncio
+    async def test_uses_parameterised_interval(self):
+        """Regression: interval must be parameter-bound, not a quoted literal."""
+        mock_db = AsyncMock()
+
+        ok_result = MagicMock()
+        ok_result.mappings.return_value = MagicMock()
+        ok_result.mappings.return_value.all.return_value = [
+            {
+                "job_name": "osha_daily_sync",
+                "total_runs": 10,
+                "successful_runs": 10,
+                "avg_records": 500.0,
+                "max_records": 900,
+                "avg_duration_sec": 12.5,
+            }
+        ]
+        trend_result = MagicMock()
+        trend_result.fetchone.return_value = (5000, 4000)
+        mock_db.execute.side_effect = [ok_result, trend_result]
+
+        summary = await get_pipeline_health_summary(mock_db, days=7)
+
+        sql_used = str(mock_db.execute.call_args_list[0].args[0].text)
+        assert "make_interval(days => :days)" in sql_used
+        assert "INTERVAL ':days days'" not in sql_used
+        job = summary["jobs"][0]
+        assert job["job_name"] == "osha_daily_sync"
+        assert job["success_rate"] == 100.0
+        assert job["alert"] == "ok"
+        assert summary["throughput_trend"]["last_24h"] == 5000
+        assert summary["throughput_trend"]["change_pct"] == 25.0
 
 
 if __name__ == "__main__":

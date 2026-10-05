@@ -4,12 +4,23 @@ from app.middleware.rate_limit import (
     RateLimitTiers,
     RateLimitMetrics,
     RateLimitAlertMiddleware,
+    ConfigurableRateLimitMiddleware,
+    DDoSProtectionMiddleware,
+    RateLimitConfigStore,
+    RateLimitRule,
+    rate_limit_config,
+    get_tier_limit,
+    reset_rate_limit_config,
     setup_rate_limiting,
     rate_limit_key,
     get_authenticated_user_id,
     get_ip_address,
     create_rate_limit_response,
     rate_limit_handler,
+)
+from app.middleware.audit import (
+    DataAccessAuditMiddleware,
+    setup_audit_logging,
 )
 
 __all__ = [
@@ -18,10 +29,19 @@ __all__ = [
     "RateLimitTiers",
     "RateLimitMetrics",
     "RateLimitAlertMiddleware",
+    "ConfigurableRateLimitMiddleware",
+    "DDoSProtectionMiddleware",
+    "RateLimitConfigStore",
+    "RateLimitRule",
+    "rate_limit_config",
+    "get_tier_limit",
+    "reset_rate_limit_config",
     "setup_rate_limiting",
     "rate_limit_key",
     "get_authenticated_user_id",
     "get_ip_address",
     "create_rate_limit_response",
     "rate_limit_handler",
+    "DataAccessAuditMiddleware",
+    "setup_audit_logging",
 ]

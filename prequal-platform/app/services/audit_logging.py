@@ -4,9 +4,11 @@
 # Owner: Data Engineer
 # Ticket: MID-434
 
+import asyncio
 import json
 import logging
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, asdict, field
 from contextvars import ContextVar
@@ -18,6 +20,12 @@ _ctx_org_id: ContextVar[Optional[str]] = ContextVar("audit_org_id", default=None
 _ctx_session_id: ContextVar[Optional[str]] = ContextVar("audit_session_id", default=None)
 
 logger = logging.getLogger("prequal.data_access_audit")
+
+_pending_persist_tasks: set = set()
+
+
+def _discard_task(task):
+    _pending_persist_tasks.discard(task)
 
 
 @dataclass
@@ -65,7 +73,9 @@ class DataAccessAuditEvent:
 class AuditLoggingService:
     VALID_OPERATIONS = {
         "POST", "GET", "PUT", "DELETE", "PATCH",
-        "BULK_READ", "BULK_WRITE", "EXPORT", "IMPORT"
+        "BULK_READ", "BULK_WRITE", "EXPORT", "IMPORT",
+        # MID-605: data quality monitoring events recorded in the audit trail
+        "DATA_QUALITY_ALERT",
     }
 
     def __init__(self, enable_elk: bool = True, enable_db: bool = True):
@@ -119,8 +129,8 @@ class AuditLoggingService:
         )
         if event.operation_type not in self.VALID_OPERATIONS:
             raise ValueError(
-                "Invalid operation_type: {event.operation_type}. "
-                "Must be one of {self.VALID_OPERATIONS}"
+                f"Invalid operation_type: {event.operation_type}. "
+                f"Must be one of {sorted(self.VALID_OPERATIONS)}"
             )
         if self.enable_elk:
             self._emit_to_elk(event)
@@ -139,7 +149,69 @@ class AuditLoggingService:
         logger.info(json.dumps(log_entry))
 
     def _emit_to_db(self, event):
-        pass
+        if not event.validate():
+            logger.warning(
+                "Skipping invalid data access audit event: operation_type=%s resource_type=%s",
+                event.operation_type, event.resource_type,
+            )
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug(
+                "No running event loop; data access audit event not persisted to DB: %s",
+                event.to_dict(),
+            )
+            return
+        task = loop.create_task(self._persist_to_db(event))
+        _pending_persist_tasks.add(task)
+        task.add_done_callback(_discard_task)
+
+    @staticmethod
+    def _to_uuid(value):
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value
+        try:
+            return uuid.UUID(str(value))
+        except (ValueError, AttributeError):
+            return None
+
+    async def _persist_to_db(self, event):
+        try:
+            from app.database import AsyncSessionLocal
+            from app.models.compliance import DataAccessAuditLog
+
+            created_at = datetime.fromisoformat(event.created_at.replace("Z", "+00:00"))
+            retention_until = created_at + timedelta(days=event.retention_days)
+            db_record = DataAccessAuditLog(
+                user_id=self._to_uuid(event.user_id),
+                operation_type=event.operation_type,
+                resource_type=event.resource_type,
+                resource_id=event.resource_id,
+                org_id=self._to_uuid(event.org_id),
+                ip_address=event.ip_address,
+                user_agent=event.user_agent,
+                request_id=event.request_id,
+                session_id=event.session_id,
+                query_filter=event.query_filter,
+                fields_accessed=event.fields_accessed,
+                record_count=event.record_count,
+                change_summary=event.change_summary,
+                before_values=event.before_values,
+                after_values=event.after_values,
+                status=event.status,
+                error_message=event.error_message,
+                compliance_tag=event.compliance_tag,
+                retention_until=retention_until,
+                created_at=created_at,
+            )
+            async with AsyncSessionLocal() as db:
+                db.add(db_record)
+                await db.commit()
+        except Exception:
+            logger.exception("Failed to persist data access audit event to DB")
 
 
 default_audit_service = AuditLoggingService()

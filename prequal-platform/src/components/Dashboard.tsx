@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { dashboardApi, complianceApi, DashboardSummary, ComplianceAlert } from '../api/client';
 import { Loading, EmptyState } from './Loading';
 import { useToast } from './ToastContext';
+import { OnboardingChecklist } from './OnboardingChecklist';
+import { useAnalytics } from '../hooks/useAnalytics';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell
@@ -17,13 +19,29 @@ interface TrendData {
   expiring: number;
 }
 
+interface DetailTabData {
+  date: string;
+  compliance: number;
+  violations: number;
+  expiring: number;
+}
+
+const TREND_PAGE_SIZE = 7;
+
 const Dashboard = () => {
   const toast = useToast();
+  const { trackExport } = useAnalytics();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [alerts, setAlerts] = useState<ComplianceAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [trendData, setTrendData] = useState<TrendData[]>([]);
   const [exportRange, setExportRange] = useState<'30' | '60' | '90'>('30');
+  
+  // Pagination state for trend chart
+  const [trendPage, setTrendPage] = useState(0);
+  
+  // Detail tab state
+  const [selectedPoint, setSelectedPoint] = useState<DetailTabData | null>(null);
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -38,12 +56,16 @@ const Dashboard = () => {
         ]);
         setSummary(summaryData);
         setAlerts(alertsData);
-        setTrendData(trendsData.map((t: any) => ({
+        const mapped = trendsData.map((t: any) => ({
           date: new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
           compliance: t.compliance_percentage,
           violations: t.open_violations,
           expiring: t.expired_certifications
-        })));
+        }));
+        setTrendData(mapped);
+        // Reset pagination when data changes
+        setTrendPage(0);
+        setSelectedPoint(null);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to load dashboard');
       } finally {
@@ -53,7 +75,39 @@ const Dashboard = () => {
     fetchDashboardData();
   }, [exportRange, toast]);
 
+  // Paginate trend data
+  const pagedTrendData = useMemo(() => {
+    const start = trendPage * TREND_PAGE_SIZE;
+    return trendData.slice(start, start + TREND_PAGE_SIZE);
+  }, [trendData, trendPage]);
+
+  const totalTrendPages = Math.ceil(trendData.length / TREND_PAGE_SIZE);
+  const canPrevTrend = trendPage > 0;
+  const canNextTrend = trendPage < totalTrendPages - 1;
+
+  const handlePrevTrend = () => {
+    if (canPrevTrend) {
+      setTrendPage(prev => prev - 1);
+      setSelectedPoint(null);
+    }
+  };
+
+  const handleNextTrend = () => {
+    if (canNextTrend) {
+      setTrendPage(prev => prev + 1);
+      setSelectedPoint(null);
+    }
+  };
+
+  const handleChartClick = (e: any) => {
+    if (e && e.activePayload && e.activePayload[0]) {
+      const data = e.activePayload[0].payload;
+      setSelectedPoint(data);
+    }
+  };
+
   const handleExportCSV = async () => {
+    trackExport('dashboard', 'csv');
     try {
       const response = await fetch(`/api/analytics/compliance/export?format=csv&expiration_bucket=${exportRange}`, {
         headers: {
@@ -101,6 +155,7 @@ const Dashboard = () => {
 
   return (
     <div className="dashboard">
+      <OnboardingChecklist />
       <div className="dashboard-header">
         <h1>Dashboard</h1>
         <div className="dashboard-nav">
@@ -136,19 +191,70 @@ const Dashboard = () => {
               </div>
               <div className="chart-container">
                 <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={trendData}>
+                  <LineChart data={pagedTrendData} onClick={handleChartClick}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="date" stroke="#6b7280" fontSize={12} />
                     <YAxis stroke="#6b7280" fontSize={12} />
                     <Tooltip
                       contentStyle={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px' }}
                     />
-                    <Line type="monotone" dataKey="compliance" stroke="#3b82f6" strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="violations" stroke="#ef4444" strokeWidth={2} dot={false} />
-                    <Line type="monotone" dataKey="expiring" stroke="#f59e0b" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="compliance" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4, cursor: 'pointer' }} activeDot={{ r: 6 }} />
+                    <Line type="monotone" dataKey="violations" stroke="#ef4444" strokeWidth={2} dot={{ r: 4, cursor: 'pointer' }} activeDot={{ r: 6 }} />
+                    <Line type="monotone" dataKey="expiring" stroke="#f59e0b" strokeWidth={2} dot={{ r: 4, cursor: 'pointer' }} activeDot={{ r: 6 }} />
                   </LineChart>
                 </ResponsiveContainer>
               </div>
+              
+              {/* Pagination Controls */}
+              <div className="pagination-controls">
+                <button 
+                  className="pagination-btn" 
+                  onClick={handlePrevTrend} 
+                  disabled={!canPrevTrend}
+                >
+                  <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                  </svg>
+                  Previous
+                </button>
+                <span className="pagination-info">
+                  Page {trendPage + 1} of {totalTrendPages || 1}
+                </span>
+                <button 
+                  className="pagination-btn" 
+                  onClick={handleNextTrend} 
+                  disabled={!canNextTrend}
+                >
+                  Next
+                  <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Item Detail Tab */}
+              {selectedPoint && (
+                <div className="item-detail-tab">
+                  <div className="detail-tab-header">
+                    <h3>Details for {selectedPoint.date}</h3>
+                    <button className="close-detail-btn" onClick={() => setSelectedPoint(null)}>×</button>
+                  </div>
+                  <div className="detail-tab-content">
+                    <div className="detail-row">
+                      <span className="detail-label">Compliance</span>
+                      <span className="detail-value" style={{ color: '#3b82f6' }}>{selectedPoint.compliance}%</span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-label">Violations</span>
+                      <span className="detail-value" style={{ color: '#ef4444' }}>{selectedPoint.violations}</span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-label">Expiring</span>
+                      <span className="detail-value" style={{ color: '#f59e0b' }}>{selectedPoint.expiring}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="charts-row">
@@ -264,7 +370,7 @@ const Dashboard = () => {
             <div className="quick-actions">
               <h2>Quick Actions</h2>
               <div className="action-buttons">
-                <button className="action-btn" onClick={() => window.location.href = '/subcontractors/new'}>
+                <button className="action-btn" onClick={() => window.location.href = '/subcontractors/import'}>
                   <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                   </svg>

@@ -1,0 +1,272 @@
+.lead-magnet-page {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  display: flex;
+  flex-direction: column;
+}
+
+.lead-header {
+  padding: 24px 40px;
+}
+
+.logo-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+}
+
+.logo-icon {
+  font-size: 24px;
+}
+
+.logo-text {
+  font-size: 20px;
+  font-weight: 700;
+  color: white;
+}
+
+.lead-content {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 80px;
+  padding: 40px;
+  max-width: 1100px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.lead-book {
+  flex-shrink: 0;
+}
+
+.book-cover {
+  width: 280px;
+  height: 360px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  transform: rotate(-3deg);
+}
+
+.book-icon {
+  font-size: 80px;
+}
+
+.book-badge {
+  background: #667eea;
+  color: white;
+  padding: 8px 20px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.lead-info {
+  max-width: 500px;
+}
+
+.lead-info h1 {
+  font-size: 40px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 20px;
+  line-height: 1.2;
+}
+
+.lead-subtitle {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+.checklist-preview {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 32px;
+}
+
+.checklist-preview li {
+  color: rgba(255, 255, 255, 0.95);
+  padding: 10px 0;
+  font-size: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.checklist-preview li:last-child {
+  border-bottom: none;
+}
+
+.lead-form {
+  background: white;
+  padding: 32px;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+}
+
+.lead-form label {
+  display: block;
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 16px;
+}
+
+.email-input-group {
+  display: flex;
+  gap: 12px;
+}
+
+.email-input-group input {
+  flex: 1;
+  padding: 14px 16px;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 15px;
+}
+
+.email-input-group input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.email-input-group button {
+  background: #667eea;
+  color: white;
+  border: none;
+  padding: 14px 24px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+
+.email-input-group button:hover {
+  background: #5a67d8;
+}
+
+.email-input-group button:disabled {
+  background: #9ca3af;
+}
+
+.form-disclaimer {
+  font-size: 13px;
+  color: #9ca3af;
+  margin-top: 12px;
+}
+
+.trust-badges {
+  display: flex;
+  gap: 24px;
+  margin-top: 24px;
+  justify-content: center;
+}
+
+.trust-badges span {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+}
+
+.lead-footer {
+  text-align: center;
+  padding: 40px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.lead-footer p {
+  margin-bottom: 16px;
+}
+
+.lead-footer a {
+  color: white;
+  font-weight: 600;
+}
+
+.lead-success {
+  max-width: 500px;
+  margin: 100px auto;
+  text-align: center;
+  background: white;
+  padding: 60px;
+  border-radius: 24px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.lead-success .success-icon {
+  width: 80px;
+  height: 80px;
+  background: #10b981;
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  margin: 0 auto 24px;
+}
+
+.lead-success h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 16px;
+}
+
+.lead-success p {
+  color: #6b7280;
+  margin-bottom: 32px;
+  line-height: 1.6;
+}
+
+.cta-button {
+  display: inline-block;
+  background: #667eea;
+  color: white;
+  padding: 14px 32px;
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.cta-button:hover {
+  background: #5a67d8;
+}
+
+@media (max-width: 900px) {
+  .lead-content {
+    flex-direction: column;
+    gap: 40px;
+    text-align: center;
+  }
+
+  .book-cover {
+    width: 200px;
+    height: 260px;
+  }
+
+  .book-icon {
+    font-size: 60px;
+  }
+
+  .lead-info h1 {
+    font-size: 32px;
+  }
+
+  .email-input-group {
+    flex-direction: column;
+  }
+}

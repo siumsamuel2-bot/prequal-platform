@@ -1,0 +1,51 @@
+# Semgrep Security Configuration for Prequal Platform
+# Runs security-focused rules from community and OWASP
+
+rules:
+  # Include OWASP Top 10 rules
+  - p:owasp-top-ten
+
+  # Include CWE Top 25 rules
+  - p:cwe-top-25
+
+  # Security rules
+  - p:security
+
+  # Detect hardcoded secrets
+  - p:secrets
+
+  # Detect SQL injection vulnerabilities
+  - p:sql-injection
+
+  # Detect XSS vulnerabilities
+  - p:xss
+
+  # Detect path traversal vulnerabilities
+  - p:path-traversal
+
+  # Detect command injection vulnerabilities
+  - p:command-injection
+
+  # Detect insecure deserialization
+  - p:insecure-deserialization
+
+  # Detect SSRF vulnerabilities
+  - p:ssrf
+
+  # Detect hardcoded credentials
+  - p:jwt
+
+  # Detect weak cryptography
+  - p:crypto
+
+# Exclude test files and node_modules
+exclude:
+  - node_modules/
+  - "**/*.test.*"
+  - "**/*.spec.*"
+  - tests/
+  - __pycache__/
+  - "*.min.js"
+
+# Configure rule severity
+# All rules default to error level for CI/CD gating

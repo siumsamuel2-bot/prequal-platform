@@ -1,52 +1,59 @@
+# syntax=docker/dockerfile:1
 # Dockerfile for Prequal Platform FastAPI Backend - Production
-# Multi-stage build for optimized image size and security
+# Optimized for size, build speed, and security
 
 # Stage 1: Build environment
-FROM python:3.11-slim AS builder
+FROM python:3.11-alpine AS builder
 
 WORKDIR /app
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
- && rm -rf /var/lib/apt/lists/* \
- && apt-get clean
+# Install build dependencies only
+RUN apk add --no-cache --virtual .build-deps \
+    build-base \
+    postgresql-dev \
+    libffi-dev
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Install Python dependencies to a virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --no-cache-dir --upgrade pip && \
+# Install Python dependencies to virtual environment
+# Uses pip cache mount for faster rebuilds
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m venv /opt/venv && \
+    . /opt/venv/bin/activate && \
+    pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
+# Remove build dependencies
+RUN apk del .build-deps
+
 # Stage 2: Production image
-FROM python:3.11-slim AS production
+FROM python:3.11-alpine AS production
 
 # Security: Create non-root user
-RUN groupadd -r appgroup && useradd -r -g appgroup appuser
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 WORKDIR /app
 
 # Install runtime dependencies only
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apk add --no-cache \
     curl \
-    libpq5 \
- && rm -rf /var/lib/apt/lists/* \
- && apt-get clean
+    postgresql-libs \
+    libffi
 
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Copy application code
-COPY --chown=appuser:appgroup requirements.txt .
-COPY --chown=appuser:appgroup app/ ./app/
-COPY --chown=appuser:appgroup api/ ./api/
-COPY --chown=appuser:appgroup alembic.ini .
-COPY --chown=appuser:appgroup alembic/ ./alembic/
+# Copy application code (grouped for fewer layers)
+COPY --chown=appuser:appgroup \
+    requirements.txt \
+    alembic.ini \
+    ./
+COPY --chown=appuser:appgroup \
+    app/ ./app/ \
+    api/ ./api/ \
+    alembic/ ./alembic/
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

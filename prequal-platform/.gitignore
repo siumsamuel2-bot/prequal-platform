@@ -52,7 +52,7 @@ uploads/*
 *.db
 *.sqlite
 *.sqlite3
-!test_prequal.db
+*.db-journal
 
 # Docker
 *.tar

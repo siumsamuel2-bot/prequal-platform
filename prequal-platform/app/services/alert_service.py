@@ -167,13 +167,35 @@ async def scan_expirations(db: AsyncSession) -> dict[str, Any]:
 # Alert summary helper
 # ---------------------------------------------------------------------------
 
-async def get_alert_summary(db: AsyncSession, days: int = 30) -> dict[str, Any]:
-    """Return a summary of alert counts for the given lookback period."""
+async def get_alert_summary(
+    db: AsyncSession, days: int = 30, team_id: uuid.UUID | None = None
+) -> dict[str, Any]:
+    """Return a summary of alert counts for the given lookback period.
+
+    When team_id is provided (MID-546 / HIGH-3), counts are restricted to
+    the team's certification chain via Certification -> Subcontractor.
+    Passing None preserves the platform-wide behavior (admin / scheduled jobs).
+    """
     today = date.today()
     future = today + timedelta(days=days)
 
+    def _alert_team_filter(q):
+        if team_id is None:
+            return q
+        return q.where(
+            AlertNotification.certification_id.in_(
+                select(Certification.id).where(
+                    Certification.subcontractor_id.in_(
+                        select(Subcontractor.id).where(
+                            Subcontractor.team_id == team_id
+                        )
+                    )
+                )
+            )
+        )
+
     pending_count = (await db.execute(
-        select(func.count(AlertNotification.id)).where(
+        _alert_team_filter(select(func.count(AlertNotification.id))).where(
             AlertNotification.scheduled_for >= today,
             AlertNotification.scheduled_for <= future,
             AlertNotification.status == "pending",
@@ -181,18 +203,23 @@ async def get_alert_summary(db: AsyncSession, days: int = 30) -> dict[str, Any]:
     )).scalar() or 0
 
     ack_count = (await db.execute(
-        select(func.count(AlertNotification.id)).where(
+        _alert_team_filter(select(func.count(AlertNotification.id))).where(
             AlertNotification.scheduled_for >= today,
             AlertNotification.scheduled_for <= future,
             AlertNotification.status == "acknowledged",
         )
     )).scalar() or 0
 
-    expired_count = (await db.execute(
-        select(func.count(Certification.id)).where(
-            Certification.status == "expired"
+    expired_q = select(func.count(Certification.id)).where(
+        Certification.status == "expired"
+    )
+    if team_id is not None:
+        expired_q = expired_q.where(
+            Certification.subcontractor_id.in_(
+                select(Subcontractor.id).where(Subcontractor.team_id == team_id)
+            )
         )
-    )).scalar() or 0
+    expired_count = (await db.execute(expired_q)).scalar() or 0
 
     return {
         "pending_alerts": pending_count,
