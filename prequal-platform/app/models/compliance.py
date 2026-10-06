@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime, date
 from typing import Optional
 from typing import List
+from typing import TYPE_CHECKING
 from sqlalchemy import (
     String, Text, Date, DateTime, Boolean, Numeric, Integer, 
     ForeignKey, UniqueConstraint, Index, ARRAY
@@ -13,6 +14,9 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.credential_upload import UploadedCredential
 
 
 class Subcontractor(Base):

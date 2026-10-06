@@ -409,7 +409,6 @@ async def _create_analytics_views_sqlite(conn):
             0 AS action_count,
             0 AS export_count,
             datetime('now') AS computed_at
-        FROM users LIMIT 1
         """
     ))
     # mv_system_health_summary
@@ -426,7 +425,6 @@ async def _create_analytics_views_sqlite(conn):
             0 AS p95_value,
             0 AS total_count,
             datetime('now') AS computed_at
-        FROM users LIMIT 1
         """
     ))
     # mv_compliance_summary
@@ -507,7 +505,7 @@ async def _create_analytics_views_sqlite(conn):
                 WHEN c.expiration_date <= date('now', '+60 days') THEN 'attention'
                 ELSE 'valid'
             END AS expiration_bucket,
-            julianday(date('now')) - julianday(c.expiration_date) AS days_until_expiration,
+            CAST(julianday(date('now')) - julianday(c.expiration_date) AS INTEGER) AS days_until_expiration,
             c.verified_at,
             c.created_at,
             datetime('now') AS computed_at

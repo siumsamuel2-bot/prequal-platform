@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from sqlalchemy import String, Boolean, DateTime, ForeignKey, Index
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -9,6 +9,12 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.auth import User
+
+
+MAX_SESSION_ROTATIONS = 200
 
 
 class UserSession(Base):
@@ -33,6 +39,7 @@ class UserSession(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     rotated_from_jti: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rotation_count: Mapped[int] = mapped_column(default=0)
 
     user: Mapped["User"] = relationship("User", back_populates="sessions")
 

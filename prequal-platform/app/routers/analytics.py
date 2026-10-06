@@ -465,7 +465,7 @@ async def get_pilot_engagement(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user),
 ):
-    from app.models.auth import Organization, User
+    from app.models.auth import Organization, TeamMember, User
     
     now = datetime.utcnow()
     cutoff = now - timedelta(days=days)

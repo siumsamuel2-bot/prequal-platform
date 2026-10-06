@@ -8,6 +8,7 @@ Adds response headers to mitigate common web vulnerabilities:
 """
 
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

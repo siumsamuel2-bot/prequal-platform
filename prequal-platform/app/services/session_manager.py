@@ -11,12 +11,13 @@ import logging
 import os
 from datetime import datetime, timedelta
 from typing import Optional
+from fastapi import HTTPException, status
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.session import UserSession
+from app.models.session import UserSession, MAX_SESSION_ROTATIONS
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,19 @@ async def rotate_session(
     """Rotate an existing session to a new JTI.
 
     The previous JTI is retained in ``rotated_from_jti`` for audit purposes.
+    Raises HTTPException if the session has exceeded the maximum allowed rotations.
     """
+    if session.rotation_count >= MAX_SESSION_ROTATIONS:
+        session.active = False
+        session.revoked_at = _utcnow()
+        await db.commit()
+        logger.warning("Session %s exceeded max rotations (%s), revoked", session.jti, MAX_SESSION_ROTATIONS)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session has exceeded maximum rotation limit",
+        )
+
+    session.rotation_count += 1
     session.rotated_from_jti = session.jti
     session.jti = new_jti
     session.last_seen_at = _utcnow()
@@ -131,7 +144,7 @@ async def rotate_session(
     )
     await db.commit()
     await db.refresh(session)
-    logger.debug("Rotated session to new jti %s", new_jti)
+    logger.debug("Rotated session to new jti %s (rotation %s)", new_jti, session.rotation_count)
     return session
 
 

@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
-    String, Text, DateTime, Boolean, ForeignKey, Index
+    String, Text, DateTime, Boolean, ForeignKey, Integer, Index
 )
 from sqlalchemy.dialects.postgresql import UUID, JSON
 from sqlalchemy.orm import Mapped, mapped_column

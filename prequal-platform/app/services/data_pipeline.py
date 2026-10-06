@@ -7,7 +7,10 @@ All new code should import directly from ``external_compliance_pipeline``.
 from __future__ import annotations
 import json
 from datetime import datetime
+from typing import Any, Dict, Optional
+
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import SyncRunLog
 
 from app.services.external_compliance_pipeline import (  # noqa: F401

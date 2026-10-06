@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 
 from app.models.compliance import Subcontractor, Certification, Violation, Project, ProjectSubcontractor
 from app.services.encryption_service import decrypt_value
