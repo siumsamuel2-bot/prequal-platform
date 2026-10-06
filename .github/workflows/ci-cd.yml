@@ -233,7 +233,7 @@ jobs:
     if: github.event.inputs.skip_tests != 'true'
     services:
       postgres:
-        image: postgres:15
+        image: postgis/postgis:15-3.4
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'test' }}
@@ -334,7 +334,7 @@ jobs:
     continue-on-error: true
     services:
       postgres:
-        image: postgres:15
+        image: postgis/postgis:15-3.4
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'test' }}
@@ -373,7 +373,7 @@ jobs:
         if: always()
         run: |
           cd prequal-platform
-          python -c "import xml.etree.ElementTree as ET, sys; root = ET.parse('pg-test-results.xml').getroot(); total = int(root.get('tests', 0)); failures = int(root.get('failures', 0)); errors = int(root.get('errors', 0)); skipped = int(root.get('skipped', 0)); print(f'PG suite: {total - failures - errors - skipped}/{total} passed, {failures} failures, {errors} errors, {skipped} skipped'); sys.exit(0)"
+          python -c "import xml.etree.ElementTree as ET, sys; root = ET.parse('pg-test-results.xml').getroot(); suites = root.findall('testsuite') or [root]; total = sum(int(s.get('tests', 0)) for s in suites); failures = sum(int(s.get('failures', 0)) for s in suites); errors = sum(int(s.get('errors', 0)) for s in suites); skipped = sum(int(s.get('skipped', 0)) for s in suites); print(f'PG suite: {total - failures - errors - skipped}/{total} passed, {failures} failures, {errors} errors, {skipped} skipped'); sys.exit(0)"
 
       - name: Upload PG test results
         uses: actions/upload-artifact@v4
@@ -390,7 +390,7 @@ jobs:
     if: github.event.inputs.skip_tests != 'true'
     services:
       postgres:
-        image: postgres:15
+        image: postgis/postgis:15-3.4
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'test' }}
@@ -448,7 +448,7 @@ jobs:
     if: github.event.inputs.skip_tests != 'true' && github.ref == 'refs/heads/develop'
     services:
       postgres:
-        image: postgres:15
+        image: postgis/postgis:15-3.4
         env:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'test' }}
