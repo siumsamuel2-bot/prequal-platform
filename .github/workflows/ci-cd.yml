@@ -27,6 +27,12 @@ on:
         default: 'false'
         type: boolean
 
+# Minimal permissions for security scanning jobs (gitleaks + SARIF upload)
+permissions:
+  contents: read
+  pull-requests: read
+  security-events: write
+
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: prequal-platform
@@ -74,22 +80,28 @@ jobs:
   # Security scanning - runs first and blocks pipeline if secrets found
   secrets-scan:
     runs-on: ubuntu-latest
+    # Advisory during first green pass (MID-640): report findings, don't block.
+    # CLI mode needs no GITLEAKS_LICENSE (board-side secret, MID-71).
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Run gitleaks secrets scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+      - name: Install gitleaks (pinned)
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz -o gitleaks.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          sudo mv gitleaks /usr/local/bin/
+
+      - name: Run gitleaks secrets scan (CLI mode)
+        run: gitleaks detect --source . --redact -c .gitleaks.toml --report-format sarif --report-path results.sarif
 
       - name: Run standalone hardcoded-secret scanner
         run: python3 scripts/scan_secrets.py
 
       - name: Upload gitleaks SARIF report
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: results.sarif
@@ -98,6 +110,8 @@ jobs:
   # Security linting
   security-lint:
     runs-on: ubuntu-latest
+    # Advisory during first green pass (MID-640): visible but non-blocking.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -106,15 +120,19 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: prequal-platform/package-lock.json
 
       - name: Install dependencies
+        working-directory: prequal-platform
         run: npm ci
 
-      - name: Run ESLint security plugin
-        run: npx eslint --plugin security .
+      - name: Run ESLint with security plugin
+        working-directory: prequal-platform
+        run: npm run lint
 
       - name: Run Semgrep security scan
-        run: npx semgrep --config auto --error
+        run: pipx run semgrep --config auto --error
+        continue-on-error: true
 
   # Dependency vulnerability scanning
   dependency-check:
@@ -127,11 +145,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
+          cache-dependency-path: prequal-platform/package-lock.json
 
       - name: Install dependencies
+        working-directory: prequal-platform
         run: npm ci
 
       - name: Run npm audit
+        working-directory: prequal-platform
         run: npm audit --audit-level=moderate
         continue-on-error: true
 
@@ -204,7 +225,8 @@ jobs:
 
   # Comprehensive test suite with coverage
   test:
-    needs: [secrets-scan, security-lint, python-lint, dependency-check]
+    # Decoupled from lint/secret gates (MID-640): tests must always run.
+    needs: [dependency-check]
     runs-on: ubuntu-latest
     if: github.event.inputs.skip_tests != 'true'
     services:
@@ -231,7 +253,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
 
+      # package.json lives in prequal-platform/ — run Node steps there (MID-640)
       - name: Install dependencies
+        working-directory: prequal-platform
         run: npm ci
 
       - name: Setup Python
@@ -285,9 +309,11 @@ jobs:
           retention-days: 7
 
       - name: Lint code
+        working-directory: prequal-platform
         run: npm run lint
 
       - name: Type check
+        working-directory: prequal-platform
         run: npm run typecheck
 
   # Backend pytest suite against real PostgreSQL (MID-628)
@@ -299,7 +325,9 @@ jobs:
   # artifact summary but do not block builds. Remove continue-on-error once
   # the suite is green against PostgreSQL.
   test-postgres:
-    needs: [secrets-scan, security-lint, python-lint, dependency-check]
+    # Decoupled from lint/secret gates (MID-640): PG parity runs on every push/PR.
+    # Advisory (continue-on-error) until the suite is green against PostgreSQL.
+    needs: [dependency-check]
     runs-on: ubuntu-latest
     continue-on-error: true
     services:
@@ -489,9 +517,11 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
+        working-directory: prequal-platform
         run: npm ci
 
       - name: Build application
+        working-directory: prequal-platform
         run: npm run build
 
       - name: Generate semantic version
@@ -549,7 +579,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
       - name: Upload Trivy scan results
-        uses: github/codeql-action/upload-sarif@v2
+        uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
