@@ -23,7 +23,7 @@ depends_on = None
 # ---------------------------------------------------------------------------
 # Raw SQL files embedded as triple-quoted strings
 # ---------------------------------------------------------------------------
-CORE_SQL = r"""\
+CORE_SQL = r"""
 CREATE TABLE subcontractors (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     company_name VARCHAR(255) NOT NULL,
@@ -149,7 +149,7 @@ CREATE TRIGGER update_project_subcontractors_updated_at BEFORE UPDATE ON project
 CREATE TRIGGER update_violations_updated_at BEFORE UPDATE ON violations FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 """
 
-EXPIRATION_SQL = r"""\
+EXPIRATION_SQL = r"""
 CREATE TABLE alert_preferences (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL,
@@ -205,7 +205,7 @@ CREATE TRIGGER update_alert_notifications_updated_at BEFORE UPDATE ON alert_noti
 CREATE TRIGGER update_certification_renewals_updated_at BEFORE UPDATE ON certification_renewals FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 """
 
-OSHA_SQL = r"""\
+OSHA_SQL = r"""
 ALTER TABLE violations ADD COLUMN osha_violation_id VARCHAR(100);
 ALTER TABLE violations ADD COLUMN citation_number VARCHAR(100);
 ALTER TABLE violations ADD COLUMN violation_description TEXT;
