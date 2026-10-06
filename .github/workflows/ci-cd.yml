@@ -291,7 +291,7 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://test:${{ secrets.POSTGRES_PASSWORD || 'test' }}@localhost:5432/test_db
         run: |
           cd prequal-platform
-          pytest tests/ -v --cov=app --cov=api --cov-report=xml --cov-report=html --cov-fail-under=80
+          python -m pytest tests/ -v --cov=app --cov=api --cov-report=xml --cov-report=html --cov-fail-under=80
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4
@@ -365,7 +365,7 @@ jobs:
           TEST_DATABASE_URL: postgresql+asyncpg://test:${{ secrets.POSTGRES_PASSWORD || 'test' }}@localhost:5432/test_db
         run: |
           cd prequal-platform
-          pytest tests/ -v --cov=app --cov=api --junitxml=pg-test-results.xml
+          python -m pytest tests/ -v --cov=app --cov=api --junitxml=pg-test-results.xml
 
       - name: Report PG suite results
         if: always()
@@ -422,7 +422,7 @@ jobs:
           TEST_COMPLIANCE_DATA: true
         run: |
           cd prequal-platform
-          pytest tests/test_external_compliance_pipeline.py -v --cov=app/services/external_compliance_pipeline --cov-report=xml
+          python -m pytest tests/test_external_compliance_pipeline.py -v --cov=app/services/external_compliance_pipeline --cov-report=xml
 
       - name: Run analytics pipeline integration tests
         env:
@@ -430,7 +430,7 @@ jobs:
           TEST_ANALYTICS_DATA: true
         run: |
           cd prequal-platform
-          pytest tests/test_analytics_pipeline.py -v --cov=app/services/analytics_pipeline --cov-report=xml
+          python -m pytest tests/test_analytics_pipeline.py -v --cov=app/services/analytics_pipeline --cov-report=xml
 
       - name: Upload integration test coverage
         uses: codecov/codecov-action@v4
@@ -479,7 +479,7 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://test:${{ secrets.POSTGRES_PASSWORD || 'test' }}@localhost:5432/test_db
         run: |
           cd prequal-platform
-          pytest tests/test_performance.py -v --benchmark-only --benchmark-json=benchmark.json
+          python -m pytest tests/test_performance.py -v --benchmark-only --benchmark-json=benchmark.json
 
       - name: Run load testing with Locust
         env:
