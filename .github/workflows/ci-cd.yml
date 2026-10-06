@@ -43,8 +43,10 @@ env:
   PYTHON_VERSION: '3.11'
   PYTHON_VERSIONS: '["3.11", "3.12"]'
   NODE_VERSION: '18'
-  SECRET_KEY: ${{ secrets.SECRET_KEY }}
-  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+  # NOTE: do NOT export SECRET_KEY/SLACK_WEBHOOK_URL here. secrets.X resolves to
+  # an empty string when unset, and an empty SECRET_KEY defeats conftest's
+  # os.environ.setdefault test fallback (ValueError: SECRET_KEY must be set).
+  # Jobs that need them reference secrets.X directly in their step env.
 
 jobs:
   # Runtime adapter health check - early detection of Paperclip runtime failures
