@@ -64,7 +64,7 @@ tags = ["crypto", "key"]
 [[rules]]
 id = "database-url"
 description = "Database Connection String with Password"
-regex = '''(?i)(postgres|mysql|mongodb|redis)://[^:]+:[^@]+@''']
+regex = '''(?i)(postgres|mysql|mongodb|redis)://[^:]+:[^@]+@'''
 tags = ["database", "credential"]
 
 # JWT Secrets

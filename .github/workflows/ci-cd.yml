@@ -234,7 +234,7 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_USER: test
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'test' }}
           POSTGRES_DB: test_db
         options: >-
           --health-cmd pg_isready
@@ -288,7 +288,7 @@ jobs:
 
       - name: Run backend tests with coverage
         env:
-          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+          DATABASE_URL: postgresql+asyncpg://test:${{ secrets.POSTGRES_PASSWORD || 'test' }}@localhost:5432/test_db
         run: |
           cd prequal-platform
           pytest tests/ -v --cov=app --cov=api --cov-report=xml --cov-report=html --cov-fail-under=80
@@ -335,7 +335,7 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_USER: test
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'test' }}
           POSTGRES_DB: test_db
         options: >-
           --health-cmd pg_isready
@@ -362,7 +362,7 @@ jobs:
 
       - name: Run backend tests against PostgreSQL
         env:
-          TEST_DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+          TEST_DATABASE_URL: postgresql+asyncpg://test:${{ secrets.POSTGRES_PASSWORD || 'test' }}@localhost:5432/test_db
         run: |
           cd prequal-platform
           pytest tests/ -v --cov=app --cov=api --junitxml=pg-test-results.xml
@@ -391,7 +391,7 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_USER: test
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'test' }}
           POSTGRES_DB: test_db
         options: >-
           --health-cmd pg_isready
@@ -418,7 +418,7 @@ jobs:
 
       - name: Run compliance pipeline integration tests
         env:
-          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+          DATABASE_URL: postgresql+asyncpg://test:${{ secrets.POSTGRES_PASSWORD || 'test' }}@localhost:5432/test_db
           TEST_COMPLIANCE_DATA: true
         run: |
           cd prequal-platform
@@ -426,7 +426,7 @@ jobs:
 
       - name: Run analytics pipeline integration tests
         env:
-          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+          DATABASE_URL: postgresql+asyncpg://test:${{ secrets.POSTGRES_PASSWORD || 'test' }}@localhost:5432/test_db
           TEST_ANALYTICS_DATA: true
         run: |
           cd prequal-platform
@@ -449,7 +449,7 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_USER: test
-          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'test' }}
           POSTGRES_DB: test_db
         options: >-
           --health-cmd pg_isready
@@ -476,14 +476,14 @@ jobs:
 
       - name: Run API performance tests
         env:
-          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+          DATABASE_URL: postgresql+asyncpg://test:${{ secrets.POSTGRES_PASSWORD || 'test' }}@localhost:5432/test_db
         run: |
           cd prequal-platform
           pytest tests/test_performance.py -v --benchmark-only --benchmark-json=benchmark.json
 
       - name: Run load testing with Locust
         env:
-          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test_db
+          DATABASE_URL: postgresql+asyncpg://test:${{ secrets.POSTGRES_PASSWORD || 'test' }}@localhost:5432/test_db
         run: |
           cd prequal-platform
           timeout 300 locust -f tests/locustfile.py --headless -u 100 -r 10 --run-time 180s --stop-timeout 10 || echo "Load test completed"
@@ -764,10 +764,11 @@ jobs:
           path: changelog.md
           retention-days: 30
 
-  # Slack notifications
+  # Slack notifications (advisory: missing SLACK_WEBHOOK_URL must not fail the pipeline)
   notify-slack-success:
     needs: [deploy-staging, deploy-production]
     runs-on: ubuntu-latest
+    continue-on-error: true
     if: success()
     steps:
       - name: Send success notification to Slack
@@ -792,6 +793,7 @@ jobs:
   notify-slack-failure:
     needs: [deploy-staging, deploy-production]
     runs-on: ubuntu-latest
+    continue-on-error: true
     if: failure()
     steps:
       - name: Send failure notification to Slack

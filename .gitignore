@@ -218,3 +218,6 @@ prequal-platform/test_jwt_security.py
 prequal-platform/test_tiers.py
 prequal-platform/pentest_report_mid276.md
 prequal-platform/logging/
+# Load-test scratch (MID-625) - throwaway credentials and local reports
+/reg.json
+/loadtests/

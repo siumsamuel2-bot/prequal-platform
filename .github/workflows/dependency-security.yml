@@ -80,19 +80,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: prequal-platform/package-lock.json
 
-      - name: Enable pnpm
-        run: corepack enable
-
+      # npm is the authority for this workspace (package-lock.json is kept in
+      # sync with package.json). The previous corepack/pnpm path auto-resolved
+      # an incompatible pnpm (12.9.1) on Node 18 and failed to execute before
+      # installing anything.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
+        run: npm ci --ignore-scripts
 
       - name: Audit production dependencies (fail on High/Critical)
-        run: pnpm audit --prod --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Full audit (advisory, non-blocking)
         if: always()
-        run: pnpm audit || true
+        run: npm audit || true
 
   sbom:
     name: Generate SBOM
