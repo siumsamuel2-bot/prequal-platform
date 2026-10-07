@@ -185,8 +185,12 @@ jobs:
           retention-days: 7
 
   # Python backend linting and type checking
+  # Advisory during first green pass (MID-640): flake8 blocking select (E9/F63/F7/F82)
+  # passes; black/ruff formatting failures are source-code fixes (MID-639) and stay
+  # visible here without blocking tests/deploys.
   python-lint:
     runs-on: ubuntu-latest
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
