@@ -1,0 +1,45 @@
+﻿# Render Blueprint for Prequal (MID-625) - FREE-tier staging
+#
+# This IS the staging-free blueprint: Render's default repo-root discovery
+# (render.yaml) applies exactly this file, so the board can accept the
+# default path. Do NOT replace it with the paid production config, which
+# lives at prequal-platform/render.yaml (Render DB/Redis) and is not used
+# for staging. The identical copy at render.staging-free.yaml is kept for
+# "Apply from file"; this root file is what the default discovery reads.
+# See prequal-platform/docs/staging-free-tier.md for the full runbook.
+#
+# Board decision (MID-71): no AWS, no paid services. This blueprint deploys
+# the FastAPI backend on a Render FREE web service. Postgres is Neon free
+# tier: its connection string is supplied as a Render sync secret
+# (DATABASE_URL), NOT as a Render database (paid). Frontend lives on Vercel
+# free (see prequal-platform/vercel.json). Redis is omitted: rate limiting
+# falls back to in-memory storage, acceptable for staging/pilot validation.
+#
+# Apply via Render dashboard: New + -> Blueprint -> connect repo -> accept
+# the default render.yaml path.
+
+services:
+  - type: web
+    name: prequal-staging-api
+    env: python
+    plan: free
+    rootDir: prequal-platform
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENVIRONMENT
+        value: staging
+      - key: DEBUG
+        value: false
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        value: http://localhost:5173
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "60"
+    healthCheckPath: /health
+    autoDeploy: true
