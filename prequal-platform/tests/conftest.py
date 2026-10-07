@@ -46,7 +46,7 @@ def _compile_pg_uuid_sqlite(type_, compiler, **kw):
     return "CHAR(32)"
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def db_engine():
     """Create an async engine and initialize all tables."""
     if _use_postgres:
@@ -606,7 +606,7 @@ async def async_client(db_engine):
         yield client
 
 
-@pytest_asyncio.fixture(autouse=True, scope="module")
+@pytest_asyncio.fixture(autouse=True, scope="module", loop_scope="module")
 async def reset_shared_tables(db_engine):
     """Clear shared compliance-domain tables at each test module boundary (MID-634).
 
