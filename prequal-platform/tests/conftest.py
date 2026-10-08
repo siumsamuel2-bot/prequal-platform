@@ -111,13 +111,26 @@ async def _drop_sqlite_schema() -> None:
         await conn.run_sync(Base.metadata.drop_all)
 
 
+_schema_initialized = False
+
+
 def _run_alembic_migrations(revision: str) -> None:
     """Run Alembic migrations against the PostgreSQL test database.
 
     Alembic requires a sync driver, so the asyncpg URL from TEST_DATABASE_URL
     is rewritten to psycopg2 (present in requirements.txt). alembic.ini's
     ``script_location = %(here)s/alembic`` resolves the migrations directory.
+
+    MID-645 belt-and-braces: migration 001 issues ``COMMIT`` mid-migration, so
+    an interrupted first run can leave the base schema committed without
+    ``alembic_version`` stamped. A stray second ``upgrade head`` would then
+    re-execute 001. The session-scoped sync ``db_engine`` fixture already runs
+    this exactly once; this guard makes re-entry a no-op as well.
     """
+    global _schema_initialized
+    if revision == "head" and _schema_initialized:
+        return
+
     from alembic import command
     from alembic.config import Config
 
@@ -125,6 +138,8 @@ def _run_alembic_migrations(revision: str) -> None:
     cfg.set_main_option("script_location", os.path.join(os.path.dirname(__file__), "..", "alembic"))
     cfg.set_main_option("sqlalchemy.url", _pg_test_url.replace("+asyncpg", "+psycopg2"))
     command.upgrade(cfg, revision)
+    if revision == "head":
+        _schema_initialized = True
 
 
 async def _create_data_quality_monitoring_tables_sqlite(conn):

@@ -471,6 +471,8 @@ _DDL_IDEMPOTENT_PATTERNS = (
      "CREATE OR REPLACE VIEW "),
     (re.compile(r"(?is)^\s*CREATE\s+FUNCTION\s+(?!OR\s+REPLACE)"),
      "CREATE OR REPLACE FUNCTION "),
+    (re.compile(r"(?is)^\s*ALTER\s+TABLE\s+(\S+)\s+ADD\s+COLUMN\s+(?!IF\s+NOT\s+EXISTS)"),
+     r"ALTER TABLE \1 ADD COLUMN IF NOT EXISTS "),
 )
 
 _CREATE_TRIGGER_RE = re.compile(
