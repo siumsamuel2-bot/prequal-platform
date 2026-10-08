@@ -142,6 +142,23 @@ def _run_alembic_migrations(revision: str) -> None:
         _schema_initialized = True
 
 
+def pytest_configure(config) -> None:
+    """Build the PostgreSQL test schema before test collection (MID-645).
+
+    ``tests/test_openapi_contract.py`` builds a schemathesis schema from the
+    ASGI app at import time, and schemathesis' ASGI transport starts the
+    FastAPI lifespan during collection. That lifespan calls ``init_db()``
+    (``Base.metadata.create_all``), which pre-creates the model schema. If
+    that happens before the first ``alembic upgrade head``, the DB has tables
+    but no ``alembic_version`` stamp, and migration 001 then fails with
+    ``DuplicateColumn``. Migrating here runs before collection, so the DB is
+    correctly versioned first; the ``_schema_initialized`` guard keeps the
+    ``db_engine`` fixture's later call a no-op.
+    """
+    if _use_postgres:
+        _run_alembic_migrations("head")
+
+
 async def _create_data_quality_monitoring_tables_sqlite(conn):
     """Create data quality monitoring tables for SQLite test database.
 
