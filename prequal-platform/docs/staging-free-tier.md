@@ -60,3 +60,12 @@ Record results on MID-625.
 
 - Root `render.yaml` (repo root discovery) **is the staging-free blueprint** — the board can accept Render's default path. The paid production config lives at `prequal-platform/render.yaml` (Render DB/Redis) and must NOT be applied for staging; `render.staging-free.yaml` is an identical copy kept for "Apply from file".
 - No secrets are committed to the repo; all credentials are provider-side env vars.
+
+## Automated provisioning (MID-648, alternative path)
+
+`.github/workflows/provision-staging.yml` provisions the same free stack via provider APIs in one manual dispatch (Actions tab -> Provision Staging (free tier) -> Run workflow). It is an **alternative** to the manual dashboard steps above — the dashboard path stays valid.
+
+- **Prerequisite (board):** store `RENDER_API_KEY`, `NEON_API_KEY`, `VERCEL_TOKEN` as repo secrets (Settings -> Secrets and variables -> Actions). Without tokens the workflow is a safe no-op (CI stays green; the summary job explains what is missing).
+- **What it does:** Neon — create-or-reuse free project `prequal-staging` and resolve the pooled connection URI; Render — create-or-reuse web service `prequal-staging-api` (free plan, mirrors the root `render.yaml` blueprint 1:1: runtime python, rootDir `prequal-platform`, same build/start commands and env vars), sets `DATABASE_URL` (converted to `?ssl=require` for asyncpg), deploys and waits for live; Vercel — create-or-reuse project with `VITE_API_URL` set to the Render URL, deploys and waits READY; CORS — updates Render `ALLOWED_ORIGINS` with the Vercel URL and redeploys. The Neon DATABASE_URL never leaves the Render job; only public URLs appear in the run summary.
+- **Note:** Render's API cannot create Blueprints (dashboard-only), so the workflow creates the service directly with the same definition as `render.yaml`. Render also requires its GitHub app installed on the repo (one-time) for the Vercel/Render git-based deploys.
+- Re-runnable: provider resources are reused by name; re-running re-syncs env vars and redeploys.

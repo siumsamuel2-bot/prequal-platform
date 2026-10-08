@@ -1,0 +1,391 @@
+# Automated free-tier staging provisioning (MID-648)
+#
+# One manual dispatch provisions the free-tier staging stack via provider APIs:
+#   1. Neon   - create (or reuse) free project `prequal-staging`
+#   2. Render - apply the repo-root render.yaml blueprint (staging-free) on the
+#               configured branch with DATABASE_URL set; wait for live
+#   3. Vercel - create (or reuse) frontend project with Root Directory
+#               `prequal-platform`, set VITE_API_URL, deploy
+#   4. CORS   - update Render ALLOWED_ORIGINS with the Vercel URL + redeploy
+#
+# Board decision (MID-71): free tiers only - no AWS, no paid services.
+#
+# Safe no-op: when RE Provider tokens are absent the workflow skips the
+# provider jobs and the summary job explains what is missing (CI stays green).
+# The Neon DATABASE_URL never leaves the Render job (it is fetched and used
+# in-job via the Neon API; only its redacted form appears in the summary).
+# The manual dashboard path in prequal-platform/docs/staging-free-tier.md
+# remains valid - this workflow is an alternative, not a replacement.
+#
+# Required repo secrets (board sets these in GitHub -> Settings -> Secrets):
+#   RENDER_API_KEY, NEON_API_KEY, VERCEL_TOKEN
+
+name: Provision Staging (free tier)
+
+on:
+  workflow_dispatch:
+    inputs:
+      render_branch:
+        description: 'Branch Render deploys the backend from'
+        required: false
+        default: 'task/mid-18'
+      neon_project:
+        description: 'Neon project name'
+        required: false
+        default: 'prequal-staging'
+      vercel_project:
+        description: 'Vercel project name'
+        required: false
+        default: 'prequal-platform'
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: Check provider tokens
+    runs-on: ubuntu-latest
+    outputs:
+      has_neon: ${{ steps.tokens.outputs.has_neon }}
+      has_render: ${{ steps.tokens.outputs.has_render }}
+      has_vercel: ${{ steps.tokens.outputs.has_vercel }}
+      any: ${{ steps.tokens.outputs.any }}
+    steps:
+      - name: Check secrets
+        id: tokens
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          has_neon=false; has_render=false; has_vercel=false
+          if [ -n "$NEON_API_KEY" ]; then has_neon=true; else echo "::notice::NEON_API_KEY not set - Neon steps will be skipped"; fi
+          if [ -n "$RENDER_API_KEY" ]; then has_render=true; else echo "::notice::RENDER_API_KEY not set - Render steps will be skipped"; fi
+          if [ -n "$VERCEL_TOKEN" ]; then has_vercel=true; else echo "::notice::VERCEL_TOKEN not set - Vercel steps will be skipped"; fi
+          if [ "$has_neon" = true ] || [ "$has_render" = true ] || [ "$has_vercel" = true ]; then any=true; else any=false; fi
+          echo "has_neon=$has_neon" >> "$GITHUB_OUTPUT"
+          echo "has_render=$has_render" >> "$GITHUB_OUTPUT"
+          echo "has_vercel=$has_vercel" >> "$GITHUB_OUTPUT"
+          echo "any=$any" >> "$GITHUB_OUTPUT"
+
+  neon:
+    name: Neon - create/reuse free project
+    needs: gate
+    if: needs.gate.outputs.has_neon == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      project_id: ${{ steps.project.outputs.project_id }}
+    steps:
+      - name: Create or reuse Neon project
+        id: project
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_NAME: ${{ github.event.inputs.neon_project || 'prequal-staging' }}
+        run: |
+          set -euo pipefail
+          api="https://console.neon.tech/api/v2"
+          existing=$(curl -sS -H "Authorization: Bearer $NEON_API_KEY" \
+            "$api/projects?limit=100")
+          project_id=$(echo "$existing" | jq -r \
+            --arg name "$NEON_PROJECT_NAME" \
+            '[.projects[] | select(.name == $name)][0].id // empty')
+          if [ -z "$project_id" ]; then
+            echo "Neon project '$NEON_PROJECT_NAME' not found - creating (free tier)"
+            created=$(curl -sS -X POST -H "Authorization: Bearer $NEON_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d "{\"project\": {\"name\": \"$NEON_PROJECT_NAME\"}}" \
+              "$api/projects")
+            project_id=$(echo "$created" | jq -r '.project.id')
+          else
+            echo "Reusing existing Neon project '$NEON_PROJECT_NAME' ($project_id)"
+          fi
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+
+  render:
+    name: Render - apply staging-free blueprint
+    needs: [gate, neon]
+    if: needs.gate.outputs.has_neon == 'true' && needs.gate.outputs.has_render == 'true' && needs.neon.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      service_url: ${{ steps.url.outputs.service_url }}
+      service_id: ${{ steps.service.outputs.service_id }}
+    steps:
+      - name: Resolve DATABASE_URL from Neon (in-job, never printed)
+        id: dburl
+        env:
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          NEON_PROJECT_ID: ${{ needs.neon.outputs.project_id }}
+        run: |
+          set -euo pipefail
+          api="https://console.neon.tech/api/v2"
+          branch_id=$(curl -sS -H "Authorization: Bearer $NEON_API_KEY" \
+            "$api/projects/$NEON_PROJECT_ID/branches" | jq -r '.branches[0].id')
+          db_name=$(curl -sS -H "Authorization: Bearer $NEON_API_KEY" \
+            "$api/projects/$NEON_PROJECT_ID/branches/$branch_id/databases" | jq -r '.databases[0].name')
+          role_name=$(curl -sS -H "Authorization: Bearer $NEON_API_KEY" \
+            "$api/projects/$NEON_PROJECT_ID/branches/$branch_id/roles" | jq -r '.roles[] | select(.name != "authenticated") | .name' | head -n1)
+          cs=$(curl -sS -H "Authorization: Bearer $NEON_API_KEY" \
+            "$api/projects/$NEON_PROJECT_ID/connection_uri?database_name=$db_name&role_name=$role_name&pooled=true")
+          pooled=$(echo "$cs" | jq -r '.uri // empty')
+          if [ -z "$pooled" ]; then
+            echo "::error::Neon returned no pooled connection URI"
+            exit 1
+          fi
+          # asyncpg (app driver) requires ssl=require; Neon emits sslmode=require
+          app_url=$(echo "$pooled" | sed -e 's/sslmode=require/ssl=require')
+          echo "::add-mask::$pooled"
+          echo "::add-mask::$app_url"
+          password=$(echo "$pooled" | sed -E 's#://[^:]+:([^@]+)@.*#\1#')
+          if [ -n "$password" ]; then echo "::add-mask::$password"; fi
+          echo "db_url=$app_url" >> "$GITHUB_OUTPUT"
+
+      - name: Create or reuse Render service (mirrors root render.yaml)
+        id: service
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_BRANCH: ${{ github.event.inputs.render_branch || 'task/mid-18' }}
+          DATABASE_URL: ${{ steps.dburl.outputs.db_url }}
+          GITHUB_REPO: siumsamuel2-bot/prequal-platform
+        run: |
+          set -euo pipefail
+          api="https://api.render.com/v1"
+          auth="Authorization: Bearer $RENDER_API_KEY"
+          existing=$(curl -sS -H "$auth" \
+            "$api/services?name=prequal-staging-api&limit=1")
+          service_id=$(echo "$existing" | jq -r '.[0].service.id // empty')
+          if [ -z "$service_id" ]; then
+            echo "Render service 'prequal-staging-api' not found - creating (free plan, mirrors render.yaml, branch $RENDER_BRANCH)"
+            owner_id=$(curl -sS -H "$auth" "$api/owners" | jq -r '.[0].id')
+            payload=$(jq -n \
+              --arg repo "https://github.com/$GITHUB_REPO" \
+              --arg branch "$RENDER_BRANCH" \
+              --arg owner "$owner_id" \
+              --arg dburl "$DATABASE_URL" \
+              '{
+                type: "web",
+                name: "prequal-staging-api",
+                ownerId: $owner,
+                repo: $repo,
+                branch: $branch,
+                autoDeploy: "yes",
+                rootDir: "prequal-platform",
+                envVars: {
+                  ENVIRONMENT: { value: "staging" },
+                  DEBUG: { value: "false" },
+                  LOG_LEVEL: { value: "INFO" },
+                  DATABASE_URL: { value: $dburl },
+                  SECRET_KEY: { generateValue: true },
+                  ALLOWED_ORIGINS: { value: "http://localhost:5173" },
+                  RATE_LIMIT_PER_MINUTE: { value: "60" }
+                },
+                serviceDetails: {
+                  runtime: "python",
+                  plan: "free",
+                  healthCheckPath: "/health",
+                  envSpecificDetails: {
+                    buildCommand: "pip install -r requirements.txt",
+                    startCommand: "alembic upgrade head && uvicorn api.main:app --host 0.0.0.0 --port $PORT"
+                  }
+                }
+              }')
+            created=$(curl -sS -X POST -H "$auth" -H "Content-Type: application/json" \
+              --data-binary "$payload" "$api/services")
+            service_id=$(echo "$created" | jq -r '.id // empty')
+            if [ -z "$service_id" ]; then
+              echo "::error::Render service creation failed: $created"
+              exit 1
+            fi
+          else
+            echo "Reusing existing Render service $service_id"
+            current=$(curl -sS -H "$auth" \
+              "$api/services/$service_id/env-vars" | \
+              jq -r '.[] | select(.envVar.key == "DATABASE_URL") | .envVar.value // empty')
+            if [ "$current" != "$DATABASE_URL" ]; then
+              echo "DATABASE_URL changed - updating env var"
+              curl -sS -X PUT -H "$auth" -H "Content-Type: application/json" \
+                -d "{\"value\": \"$DATABASE_URL\"}" \
+                "$api/services/$service_id/env-vars/DATABASE_URL" >/dev/null
+            fi
+          fi
+          echo "service_id=$service_id" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy and wait for live
+        id: deploy
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ steps.service.outputs.service_id }}
+        run: |
+          set -euo pipefail
+          auth="Authorization: Bearer $RENDER_API_KEY"
+          last_status=$(curl -sS -H "$auth" \
+            "https://api.render.com/v1/services/$SERVICE_ID/deploys?limit=1" | jq -r '.[0].deploy.status // empty')
+          if [ "$last_status" != "live" ]; then
+            echo "Triggering deploy (last status: $last_status)"
+            curl -sS -X POST -H "$auth" -H "Content-Type: application/json" \
+              -d '{}' "https://api.render.com/v1/services/$SERVICE_ID/deploys" >/dev/null
+          fi
+          for i in $(seq 1 60); do
+            sleep 20
+            status=$(curl -sS -H "$auth" \
+              "https://api.render.com/v1/services/$SERVICE_ID/deploys?limit=1" | jq -r '.[0].deploy.status // empty')
+            echo "deploy status: $status ($i)"
+            if [ "$status" = "live" ]; then break; fi
+            if [ "$status" = "deactivated" ] || [ "$status" = "build_failed" ] || [ "$status" = "canceled" ]; then
+              echo "::error::Render deploy ended with status $status - check Render dashboard logs"
+              exit 1
+            fi
+          done
+          if [ "$status" != "live" ]; then
+            echo "::error::Deploy did not reach live within timeout"
+            exit 1
+          fi
+
+      - name: Capture service URL
+        id: url
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ steps.service.outputs.service_id }}
+        run: |
+          set -euo pipefail
+          url=$(curl -sS -H "Authorization: Bearer $RENDER_API_KEY" \
+            "https://api.render.com/v1/services/$SERVICE_ID" | jq -r '.serviceUrl // empty')
+          if [ -z "$url" ]; then
+            url="https://prequal-staging-api.onrender.com"
+            echo "::warning::serviceUrl missing from Render API - assuming $url"
+          fi
+          echo "service_url=$url" >> "$GITHUB_OUTPUT"
+
+  vercel:
+    name: Vercel - create/reuse frontend project
+    needs: [gate, render]
+    if: needs.gate.outputs.has_vercel == 'true' && needs.render.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      deploy_url: ${{ steps.deploy.outputs.deploy_url }}
+    steps:
+      - name: Create or reuse Vercel project and set VITE_API_URL
+        id: project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT: ${{ github.event.inputs.vercel_project || 'prequal-platform' }}
+          RENDER_URL: ${{ needs.render.outputs.service_url }}
+          GITHUB_ORG: siumsamuel2-bot
+          GITHUB_REPO: prequal-platform
+          RENDER_BRANCH: ${{ github.event.inputs.render_branch || 'task/mid-18' }}
+        run: |
+          set -euo pipefail
+          auth="Authorization: Bearer $VERCEL_TOKEN"
+          existing=$(curl -sS -H "$auth" "https://api.vercel.com/v9/projects?slug=$VERCEL_PROJECT")
+          project_id=$(echo "$existing" | jq -r '.projects[0].id // empty')
+          if [ -z "$project_id" ]; then
+            echo "Vercel project '$VERCEL_PROJECT' not found - creating (Hobby tier)"
+            created=$(curl -sS -X POST -H "$auth" -H "Content-Type: application/json" \
+              -d "{\"name\": \"$VERCEL_PROJECT\", \"framework\": \"vite\"}" \
+              "https://api.vercel.com/v10/projects")
+            project_id=$(echo "$created" | jq -r '.id')
+          else
+            echo "Reusing existing Vercel project ($project_id)"
+          fi
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+          # VITE_API_URL points the frontend at the Render API (upsert=true makes re-runs update in place)
+          curl -sS -X POST -H "$auth" -H "Content-Type: application/json" \
+            -d "{\"key\": \"VITE_API_URL\", \"value\": \"$RENDER_URL\", \"type\": \"plain\", \"target\": [\"production\", \"preview\", \"development\"]}" \
+            "https://api.vercel.com/v9/projects/$project_id/environment-variables?upsert=true" >/dev/null || \
+            echo "::warning::VITE_API_URL env upsert returned non-200 (check Vercel project env)"
+
+      - name: Deploy and wait for READY
+        id: deploy
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT: ${{ github.event.inputs.vercel_project || 'prequal-platform' }}
+          GITHUB_ORG: siumsamuel2-bot
+          GITHUB_REPO: prequal-platform
+          RENDER_BRANCH: ${{ github.event.inputs.render_branch || 'task/mid-18' }}
+        run: |
+          set -euo pipefail
+          auth="Authorization: Bearer $VERCEL_TOKEN"
+          dep=$(curl -sS -X POST -H "$auth" -H "Content-Type: application/json" \
+            -d "{\"name\": \"$VERCEL_PROJECT\", \"gitSource\": {\"type\": \"github\", \"org\": \"$GITHUB_ORG\", \"repo\": \"$GITHUB_REPO\", \"ref\": \"$RENDER_BRANCH\"}}" \
+            "https://api.vercel.com/v13/deployments")
+          dep_id=$(echo "$dep" | jq -r '.id // empty')
+          if [ -z "$dep_id" ]; then
+            echo "::error::Vercel deployment trigger failed: $dep"
+            exit 1
+          fi
+          for i in $(seq 1 40); do
+            sleep 15
+            state=$(curl -sS -H "$auth" "https://api.vercel.com/v13/deployments/$dep_id" | jq -r '.readyState // .state // empty')
+            echo "deployment state: $state ($i)"
+            if [ "$state" = "READY" ]; then break; fi
+            if [ "$state" = "ERROR" ] || [ "$state" = "CANCELED" ]; then
+              echo "::error::Vercel deployment ended with state $state - check Vercel dashboard logs"
+              exit 1
+            fi
+          done
+          if [ "$state" != "READY" ]; then
+            echo "::error::Vercel deployment did not become READY within timeout"
+            exit 1
+          fi
+          url=$(curl -sS -H "$auth" "https://api.vercel.com/v13/deployments/$dep_id" | jq -r '.url // empty')
+          echo "deploy_url=https://$url" >> "$GITHUB_OUTPUT"
+
+  cors-and-summary:
+    name: CORS update + summary
+    needs: [gate, vercel]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update Render ALLOWED_ORIGINS with Vercel URL
+        if: needs.gate.outputs.has_render == 'true' && needs.gate.outputs.has_vercel == 'true' && needs.vercel.outputs.deploy_url != ''
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          VERCEL_URL: ${{ needs.vercel.outputs.deploy_url }}
+        run: |
+          set -euo pipefail
+          auth="Authorization: Bearer $RENDER_API_KEY"
+          service_id=$(curl -sS -H "$auth" \
+            "https://api.render.com/v1/services?name=prequal-staging-api&limit=1" | jq -r '.[0].service.id // empty')
+          if [ -z "$service_id" ]; then
+            echo "::warning::Render service not found - skipping CORS update"
+            exit 0
+          fi
+          origins="http://localhost:5173,$VERCEL_URL"
+          echo "Setting ALLOWED_ORIGINS=$origins"
+          curl -sS -X PUT -H "$auth" -H "Content-Type: application/json" \
+            -d "{\"value\": \"$origins\"}" \
+            "https://api.render.com/v1/services/$service_id/env-vars/ALLOWED_ORIGINS" >/dev/null
+          curl -sS -X POST -H "$auth" -H "Content-Type: application/json" \
+            -d '{}' "https://api.render.com/v1/services/$service_id/deploys" >/dev/null
+          echo "Render redeploy triggered for CORS update"
+
+      - name: Write summary
+        if: always()
+        env:
+          HAS_NEON: ${{ needs.gate.outputs.has_neon }}
+          HAS_RENDER: ${{ needs.gate.outputs.has_render }}
+          HAS_VERCEL: ${{ needs.gate.outputs.has_vercel }}
+          RENDER_URL: ${{ needs.render.outputs.service_url }}
+          VERCEL_URL: ${{ needs.vercel.outputs.deploy_url }}
+        run: |
+          {
+            echo "## Free-tier staging provisioning (MID-648)"
+            echo ""
+            if [ "$HAS_NEON" != "true" ] && [ "$HAS_RENDER" != "true" ] && [ "$HAS_VERCEL" != "true" ]; then
+              echo "**Safe no-op:** no provider tokens found in repo secrets."
+              echo "Set \`RENDER_API_KEY\`, \`NEON_API_KEY\`, \`VERCEL_TOKEN\` (GitHub -> Settings -> Secrets and variables -> Actions), then re-run this workflow."
+              echo "The manual dashboard path in \`prequal-platform/docs/staging-free-tier.md\` remains valid."
+            else
+              echo "| Step | Status |"
+              echo "| ---- | ------ |"
+              echo "| Neon project | $([ "$HAS_NEON" = "true" ] && echo "done" || echo "skipped (NEON_API_KEY missing)") |"
+              echo "| Render service | $([ "$HAS_RENDER" = "true" ] && echo "done" || echo "skipped (RENDER_API_KEY missing)") |"
+              echo "| Vercel frontend | $([ "$HAS_VERCEL" = "true" ] && echo "done" || echo "skipped (VERCEL_TOKEN missing)") |"
+              echo ""
+              if [ -n "${RENDER_URL:-}" ]; then echo "- API: $RENDER_URL"; fi
+              if [ -n "${VERCEL_URL:-}" ]; then echo "- Frontend: $VERCEL_URL"; fi
+              echo ""
+              echo "DATABASE_URL is intentionally not printed here (contains credentials); it is set on the Render service via the Render API. Verify in Render dashboard -> prequal-staging-api -> Environment."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
