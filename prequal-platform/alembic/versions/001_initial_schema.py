@@ -9,6 +9,8 @@ Pre-requisites:
         CREATE EXTENSION IF NOT EXISTS "postgis";
 """
 
+import re
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pg
@@ -428,13 +430,60 @@ def _split_statements(sql: str):
     return [s for s in statements if s]
 
 def _execute_sql(connection, raw_sql: str, context_label: str):
-    """Execute a block of raw SQL on the given connection, parsing with _split_statements."""
+    """Execute a block of raw SQL on the given connection, parsing with _split_statements.
+
+    Statements are rewritten to be idempotent (MID-645) so re-running
+    ``alembic upgrade head`` against a database that already holds the base
+    schema cannot hard-fail the whole suite with ``DuplicateTable``. Only
+    existence guards are added; column and type semantics are untouched.
+    """
     statements = _split_statements(raw_sql)
     for idx, statement in enumerate(statements):
         # skip empty/whitespace-only lines safely
         if not statement.strip():
             continue
-        op.execute(text(statement))
+        # PostgreSQL has no CREATE TRIGGER IF NOT EXISTS (before v14), so a
+        # re-run is guarded with an explicit DROP first.
+        trigger_match = _CREATE_TRIGGER_RE.match(statement)
+        if trigger_match:
+            trigger_name, table_name = trigger_match.group(1), trigger_match.group(2)
+            op.execute(text(
+                f"DROP TRIGGER IF EXISTS {trigger_name} ON {table_name}"
+            ))
+            op.execute(text(statement))
+            continue
+        op.execute(text(_make_idempotent(statement)))
+
+
+# Rewrites ``CREATE <object>`` prefixes to their idempotent form. Order
+# matters: the more specific prefixes (UNIQUE INDEX, MATERIALIZED VIEW) are
+# attempted before their shorter cousins.
+_DDL_IDEMPOTENT_PATTERNS = (
+    (re.compile(r"(?is)^\s*CREATE\s+TABLE\s+(?!IF\s+NOT\s+EXISTS)"),
+     "CREATE TABLE IF NOT EXISTS "),
+    (re.compile(r"(?is)^\s*CREATE\s+UNIQUE\s+INDEX\s+(?!IF\s+NOT\s+EXISTS)"),
+     "CREATE UNIQUE INDEX IF NOT EXISTS "),
+    (re.compile(r"(?is)^\s*CREATE\s+INDEX\s+(?!IF\s+NOT\s+EXISTS)"),
+     "CREATE INDEX IF NOT EXISTS "),
+    (re.compile(r"(?is)^\s*CREATE\s+MATERIALIZED\s+VIEW\s+(?!IF\s+NOT\s+EXISTS)"),
+     "CREATE MATERIALIZED VIEW IF NOT EXISTS "),
+    (re.compile(r"(?is)^\s*CREATE\s+VIEW\s+(?!IF\s+NOT\s+EXISTS|OR\s+REPLACE)"),
+     "CREATE OR REPLACE VIEW "),
+    (re.compile(r"(?is)^\s*CREATE\s+FUNCTION\s+(?!OR\s+REPLACE)"),
+     "CREATE OR REPLACE FUNCTION "),
+)
+
+_CREATE_TRIGGER_RE = re.compile(
+    r"(?is)^\s*CREATE\s+TRIGGER\s+(\w+)\s+.*?\bON\s+(\w+)"
+)
+
+
+def _make_idempotent(statement: str) -> str:
+    """Return an existence-guarded form of a raw DDL statement."""
+    for pattern, replacement in _DDL_IDEMPOTENT_PATTERNS:
+        if pattern.match(statement):
+            return pattern.sub(replacement, statement, count=1)
+    return statement
 
 def upgrade() -> None:
     """Create all tables, indexes, views, and triggers."""

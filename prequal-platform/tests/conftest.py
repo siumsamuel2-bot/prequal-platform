@@ -3,6 +3,7 @@
 Provides async database session and test client fixtures.
 """
 
+import asyncio
 import os
 
 import uuid
@@ -46,9 +47,22 @@ def _compile_pg_uuid_sqlite(type_, compiler, **kw):
     return "CHAR(32)"
 
 
-@pytest_asyncio.fixture(scope="session")
-async def db_engine():
-    """Create an async engine and initialize all tables."""
+@pytest.fixture(scope="session")
+def db_engine():
+    """Initialize the test database schema exactly once per test session.
+
+    This is deliberately a *synchronous* session-scoped fixture (MID-645).
+    A ``pytest_asyncio`` session-scoped async fixture is re-instantiated once
+    per event loop whenever ``loop_scope`` is left at its default (function)
+    scope, so ``alembic upgrade head`` re-ran for every test against the
+    already-migrated database and produced a cascade of ``DuplicateTable``
+    errors (717 in the first real ``test-postgres`` run). Pinning
+    ``loop_scope`` previously made things worse under pytest-asyncio 1.4.0
+    (``attempt to write a readonly database``), so instead we avoid the async
+    fixture machinery entirely: the schema is built through ``asyncio.run`` in
+    a plain sync fixture that pytest evaluates once per session, independent
+    of any event loop.
+    """
     if _use_postgres:
         # PostgreSQL parity mode: apply the real Alembic migrations so
         # materialized views and Alembic-only tables exist exactly as in
@@ -61,14 +75,7 @@ async def db_engine():
                 os.remove(_test_db_path)
             except PermissionError:
                 pass  # Windows may hold the file; create_all below is idempotent
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            # Analytics materialized views are PostgreSQL-only; create regular
-            # views in SQLite so pipeline tests can execute.
-            await _create_analytics_views_sqlite(conn)
-            # Data quality monitoring tables are Alembic-only; create them for
-            # test compatibility when running under SQLite.
-            await _create_data_quality_monitoring_tables_sqlite(conn)
+        asyncio.run(_init_sqlite_schema())
     yield engine
     if _use_postgres:
         # Best-effort teardown of the disposable test database
@@ -77,14 +84,31 @@ async def db_engine():
         except Exception:  # noqa: BLE001 - teardown must not fail the suite
             pass
     else:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.drop_all)
+        asyncio.run(_drop_sqlite_schema())
         if os.path.exists(_test_db_path):
             try:
                 os.remove(_test_db_path)
             except PermissionError:
                 pass  # Windows may hold the file; let temp cleanup handle it
-    await engine.dispose()
+    asyncio.run(engine.dispose())
+
+
+async def _init_sqlite_schema() -> None:
+    """Create all tables and SQLite-compatible views exactly once."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        # Analytics materialized views are PostgreSQL-only; create regular
+        # views in SQLite so pipeline tests can execute.
+        await _create_analytics_views_sqlite(conn)
+        # Data quality monitoring tables are Alembic-only; create them for
+        # test compatibility when running under SQLite.
+        await _create_data_quality_monitoring_tables_sqlite(conn)
+
+
+async def _drop_sqlite_schema() -> None:
+    """Drop all SQLite test tables/views."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
 
 
 def _run_alembic_migrations(revision: str) -> None:
