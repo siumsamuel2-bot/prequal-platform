@@ -10,16 +10,24 @@ from alembic import context
 # access to the values within the .ini file in use.
 config = context.config
 
-# MID-625: honor DATABASE_URL so `alembic upgrade head` targets the real
-# database (e.g. Neon staging) instead of alembic.ini's localhost default.
-# Alembic requires a sync driver: rewrite +asyncpg -> +psycopg2 (present in
-# requirements.txt). Plain postgresql:// URLs are already sync-driver
-# compatible and pass through unchanged.
+# MID-625 / MID-653: honor DATABASE_URL so `alembic upgrade head` targets the
+# real database (e.g. Neon staging) instead of alembic.ini's localhost default.
+# Alembic requires a *sync* driver, so normalize any Postgres scheme the app
+# may be handed (plain, asyncpg, or psycopg3) onto `psycopg2`, which is in
+# requirements.txt. libpq (psycopg2) wants `sslmode=require` while asyncpg
+# wants `ssl=require`, so translate the SSL param here too. Normalizing in
+# this one place means the board never has to hand-edit the URL scheme.
+def _sync_alembic_url(url: str) -> str:
+    url = url.replace("postgres://", "postgresql://", 1)
+    url = url.replace("+asyncpg://", "://").replace("+psycopg://", "://")
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
+    return url.replace("ssl=require", "sslmode=require")
+
+
 _database_url = os.getenv("DATABASE_URL", "")
 if _database_url:
-    config.set_main_option(
-        "sqlalchemy.url", _database_url.replace("+asyncpg", "+psycopg2")
-    )
+    config.set_main_option("sqlalchemy.url", _sync_alembic_url(_database_url))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
