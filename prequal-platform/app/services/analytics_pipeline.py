@@ -9,6 +9,7 @@ Owner: Data Engineer
 from __future__ import annotations
 
 import logging
+import uuid as _uuid
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
@@ -16,6 +17,26 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+
+def _team_filter_value(db: AsyncSession, team_id: Any) -> Any:
+    """Return a bind value for a ``team_id`` comparison on any dialect.
+
+    The analytics read filters run as raw SQL against materialized views that
+    expose only ``subcontractor_id`` / ``project_id``, so tenant scoping is done
+    with a ``<table>.team_id = :team_id`` subquery. PostgreSQL stores a native
+    UUID and accepts a ``uuid.UUID`` bind, while SQLite (used by the test
+    harness) stores PostgreSQL UUID columns as 32-char hex strings. Passing the
+    wrong representation silently returns no rows (too little data, not a leak),
+    but that breaks legitimate per-team reads, so normalise per dialect.
+    """
+    value = team_id if isinstance(team_id, _uuid.UUID) else _uuid.UUID(str(team_id))
+    name = ""
+    try:
+        name = db.get_bind().dialect.name
+    except Exception:  # noqa: BLE001 - best-effort dialect detection
+        name = ""
+    return value.hex if name == "sqlite" else value
 
 
 def _to_iso(value: Any) -> Optional[str]:
@@ -133,10 +154,15 @@ async def get_certification_export_rows(
     *,
     expiration_bucket: Optional[str] = None,
     subcontractor_id: Optional[str] = None,
+    team_id: Optional[str] = None,
     limit: int = 5000,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
-    """Return paginated rows for CSV export."""
+    """Return paginated rows for CSV export.
+
+    When ``team_id`` is provided (MID-650), rows are restricted to that team's
+    subcontractors. ``None`` preserves platform-wide behaviour (admin callers).
+    """
     params: dict[str, Any] = {"limit": limit, "offset": offset}
     filters = ["1=1"]
 
@@ -146,6 +172,11 @@ async def get_certification_export_rows(
     if subcontractor_id:
         filters.append("subcontractor_id = :sub_id")
         params["sub_id"] = subcontractor_id
+    if team_id is not None:
+        filters.append(
+            "subcontractor_id IN (SELECT id FROM subcontractors WHERE team_id = :team_id)"
+        )
+        params["team_id"] = _team_filter_value(db, team_id)
 
     where_clause = " AND ".join(filters)
 
@@ -206,6 +237,7 @@ async def get_certification_export_count(
     *,
     expiration_bucket: Optional[str] = None,
     subcontractor_id: Optional[str] = None,
+    team_id: Optional[str] = None,
 ) -> int:
     """Return total count for pagination headers."""
     params: dict[str, Any] = {}
@@ -217,6 +249,11 @@ async def get_certification_export_count(
     if subcontractor_id:
         filters.append("subcontractor_id = :sub_id")
         params["sub_id"] = subcontractor_id
+    if team_id is not None:
+        filters.append(
+            "subcontractor_id IN (SELECT id FROM subcontractors WHERE team_id = :team_id)"
+        )
+        params["team_id"] = _team_filter_value(db, team_id)
 
     where_clause = " AND ".join(filters)
 
@@ -256,7 +293,7 @@ async def get_recent_alerts(
         filters.append(
             "subcontractor_id IN (SELECT id FROM subcontractors WHERE team_id = :team_id)"
         )
-        params["team_id"] = str(team_id)
+        params["team_id"] = _team_filter_value(db, team_id)
 
     where_clause = " AND ".join(filters)
 
@@ -383,18 +420,35 @@ async def get_project_compliance_by_id(
     }
 
 
-async def get_all_project_compliance(db: AsyncSession, limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
-    """Return compliance summary for all active projects."""
+async def get_all_project_compliance(
+    db: AsyncSession,
+    limit: int = 500,
+    offset: int = 0,
+    team_id: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Return compliance summary for all active projects.
+
+    When ``team_id`` is provided (MID-650), only projects owned by that team are
+    returned. ``None`` preserves platform-wide behaviour (admin callers).
+    """
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    filters = ["1=1"]
+    if team_id is not None:
+        filters.append("project_id IN (SELECT id FROM projects WHERE team_id = :team_id)")
+        params["team_id"] = _team_filter_value(db, team_id)
+    where_clause = " AND ".join(filters)
+
     result = await db.execute(
         text(
-            """
+            f"""
             SELECT *
             FROM mv_project_compliance
+            WHERE {where_clause}
             ORDER BY computed_at DESC
             LIMIT :limit OFFSET :offset
             """
         ),
-        {"limit": limit, "offset": offset},
+        params,
     )
     rows = result.mappings().all()
     projects = []
@@ -409,6 +463,10 @@ async def get_all_project_compliance(db: AsyncSession, limit: int = 500, offset:
                 "project_status": row["project_status"],
                 "total_subcontractors": total_subcontractors,
                 "active_subcontractors": row["active_subcontractors"],
+                # Present in the PostgreSQL view (migration 010); the SQLite test
+                # shim omits it, so fall back to 0 rather than failing response
+                # validation for the whole endpoint.
+                "suspended_subcontractors": row.get("suspended_subcontractors", 0),
                 "compliant_subcontractors": compliant_subcontractors,
                 "compliance_rate": _safe_rate(compliant_subcontractors, total_subcontractors),
                 "open_violations": row["open_violations"],

@@ -3,14 +3,14 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, and_, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.analytics import AnalyticsEvent, UserFeedback, AnalyticsEventType
-from app.models.auth import User
+from app.models.auth import User, TeamMember
 from app.routers.auth import get_current_user, require_admin, TokenData
 from app.services.analytics_pipeline import (
     get_compliance_summary,
@@ -20,10 +20,33 @@ from app.services.analytics_pipeline import (
     get_recent_alerts,
     get_all_project_compliance,
 )
+from app.services.tenancy import (
+    is_admin as _is_admin,
+    require_caller_team_id as _require_caller_team_id,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
+
+
+def _require_platform_admin(current_user: TokenData) -> None:
+    """Deny non-admins access to platform-wide (un-scopable) analytics.
+
+    Several analytics aggregates are computed as platform-wide materialized
+    views with no tenant dimension, so there is no safe way to scope them to a
+    single team. Restricting them to admins is the fail-closed choice (MID-650).
+    """
+    if not _is_admin(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required for platform-wide analytics",
+        )
+
+
+def _team_user_subquery(team_id):
+    """Subquery of user ids that belong to ``team_id`` (live membership)."""
+    return select(TeamMember.user_id).where(TeamMember.team_id == team_id)
 
 
 class AnalyticsEventCreate(BaseModel):
@@ -128,14 +151,28 @@ async def get_events(
     current_user: TokenData = Depends(get_current_user)
 ):
     cutoff = datetime.utcnow() - timedelta(days=days)
-    
+
+    # MID-650: non-admins only ever see events produced by members of their own
+    # team; admins see the platform-wide stream.
+    team_id = await _require_caller_team_id(db, current_user)
+
     query = select(AnalyticsEvent).where(AnalyticsEvent.created_at >= cutoff)
-    
+
+    if team_id is not None:
+        query = query.where(
+            AnalyticsEvent.user_id.in_(_team_user_subquery(team_id))
+        )
     if event_type:
         query = query.where(AnalyticsEvent.event_type == event_type)
     if user_id:
-        query = query.where(AnalyticsEvent.user_id == UUID(user_id))
-    
+        try:
+            query = query.where(AnalyticsEvent.user_id == UUID(user_id))
+        except (ValueError, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="user_id must be a valid UUID",
+            )
+
     query = query.order_by(desc(AnalyticsEvent.created_at)).offset(skip).limit(limit)
     result = await db.execute(query)
     events = result.scalars().all()
@@ -163,43 +200,67 @@ async def get_analytics_summary(
     now = datetime.utcnow()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = today_start - timedelta(days=7)
-    
-    total_result = await db.execute(select(func.count(AnalyticsEvent.id)))
+
+    # MID-650: non-admins only ever aggregate events/feedback produced by members
+    # of their own team; admins see the platform-wide rollup.
+    team_id = await _require_caller_team_id(db, current_user)
+
+    def _scope_events(stmt):
+        if team_id is not None:
+            return stmt.where(AnalyticsEvent.user_id.in_(_team_user_subquery(team_id)))
+        return stmt
+
+    def _scope_feedback(stmt):
+        if team_id is not None:
+            return stmt.where(UserFeedback.user_id.in_(_team_user_subquery(team_id)))
+        return stmt
+
+    total_result = await db.execute(_scope_events(select(func.count(AnalyticsEvent.id))))
     total_events = total_result.scalar() or 0
-    
+
     unique_users_result = await db.execute(
-        select(func.count(func.distinct(AnalyticsEvent.user_id)))
+        _scope_events(select(func.count(func.distinct(AnalyticsEvent.user_id))))
     )
     unique_users = unique_users_result.scalar() or 0
-    
+
     events_today_result = await db.execute(
-        select(func.count(AnalyticsEvent.id)).where(AnalyticsEvent.created_at >= today_start)
+        _scope_events(
+            select(func.count(AnalyticsEvent.id)).where(AnalyticsEvent.created_at >= today_start)
+        )
     )
     events_today = events_today_result.scalar() or 0
-    
+
     events_week_result = await db.execute(
-        select(func.count(AnalyticsEvent.id)).where(AnalyticsEvent.created_at >= week_start)
+        _scope_events(
+            select(func.count(AnalyticsEvent.id)).where(AnalyticsEvent.created_at >= week_start)
+        )
     )
     events_this_week = events_week_result.scalar() or 0
-    
+
     type_counts_result = await db.execute(
-        select(AnalyticsEvent.event_type, func.count(AnalyticsEvent.id))
-        .group_by(AnalyticsEvent.event_type)
+        _scope_events(
+            select(AnalyticsEvent.event_type, func.count(AnalyticsEvent.id))
+            .group_by(AnalyticsEvent.event_type)
+        )
     )
     events_by_type = {row[0]: row[1] for row in type_counts_result.all()}
-    
+
     recent_result = await db.execute(
-        select(AnalyticsEvent)
-        .order_by(desc(AnalyticsEvent.created_at))
-        .limit(10)
+        _scope_events(
+            select(AnalyticsEvent)
+            .order_by(desc(AnalyticsEvent.created_at))
+            .limit(10)
+        )
     )
     recent_events = recent_result.scalars().all()
-    
-    total_feedback_result = await db.execute(select(func.count(UserFeedback.id)))
+
+    total_feedback_result = await db.execute(_scope_feedback(select(func.count(UserFeedback.id))))
     total_feedback = total_feedback_result.scalar() or 0
-    
+
     avg_rating_result = await db.execute(
-        select(func.avg(UserFeedback.rating)).where(UserFeedback.rating.isnot(None))
+        _scope_feedback(
+            select(func.avg(UserFeedback.rating)).where(UserFeedback.rating.isnot(None))
+        )
     )
     average_rating = avg_rating_result.scalar()
     
@@ -265,11 +326,15 @@ async def get_feedback(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
+    # MID-650: scope feedback to the caller's team for non-admins.
+    team_id = await _require_caller_team_id(db, current_user)
     query = select(UserFeedback)
-    
+    if team_id is not None:
+        query = query.where(UserFeedback.user_id.in_(_team_user_subquery(team_id)))
+
     if feedback_type:
         query = query.where(UserFeedback.feedback_type == feedback_type)
-    
+
     query = query.order_by(desc(UserFeedback.created_at)).offset(skip).limit(limit)
     result = await db.execute(query)
     feedback_items = result.scalars().all()
@@ -357,6 +422,7 @@ async def get_feature_adoption(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
+    _require_platform_admin(current_user)
     from app.services.analytics_pipeline import get_feature_adoption_summary
     data = await get_feature_adoption_summary(
         db,
@@ -387,6 +453,7 @@ async def get_system_health(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
+    _require_platform_admin(current_user)
     from app.services.analytics_pipeline import get_system_health_summary
     data = await get_system_health_summary(
         db,
@@ -414,6 +481,7 @@ async def get_performance_metrics(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
+    _require_platform_admin(current_user)
     result = await db.execute(
         text("""
             SELECT
@@ -465,81 +533,74 @@ async def get_pilot_engagement(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user),
 ):
-    from app.models.auth import Organization, TeamMember, User
-    
+    from app.models.auth import Organization
+
     now = datetime.utcnow()
     cutoff = now - timedelta(days=days)
-    
-    user_role = getattr(current_user, 'role', 'viewer')
-    user_id_str = getattr(current_user, 'user_id', None)
-    
-    def _apply_org_filter(query):
-        """Apply organization filtering based on user role."""
-        import asyncio
-        if user_role == "admin":
-            return query
-        if user_id_str:
-            try:
-                user_uuid = UUID(user_id_str)
-            except ValueError:
-                # user_id_str is not a valid UUID (e.g., "manager-id"),
-                # fall back to no org filtering
-                return query
-            if user_role == "manager":
-                team_result = db.execute(
-                    select(TeamMember.team_id).where(TeamMember.user_id == user_uuid)
-                )
-                team_id = team_result.scalar_one_or_none()
-                if team_id:
-                    org_subquery = select(Organization.id).where(Organization.id == team_id)
-                    return query.where(AnalyticsEvent.organization_id.in_(org_subquery))
-                else:
-                    return query.where(AnalyticsEvent.organization_id.is_(None))
-            else:
-                return query.where(AnalyticsEvent.organization_id == User.org_id)
-        return query.where(AnalyticsEvent.organization_id.is_(None))
-    
-    total_orgs_query = _apply_org_filter(select(func.count(Organization.id)))
-    total_orgs_result = await db.execute(total_orgs_query)
+
+    # MID-650: the caller's team is resolved from live DB membership. Admins are
+    # intentionally platform-wide; every other caller is scoped to their team and
+    # fails closed (403) when no team can be resolved. Events are attributed to a
+    # team through the user that produced them, which is the only durable link.
+    team_id = await _require_caller_team_id(db, current_user)
+    scoped = team_id is not None
+    team_users = _team_user_subquery(team_id) if scoped else None
+
+    def _scope_events(stmt):
+        return stmt.where(AnalyticsEvent.user_id.in_(team_users)) if scoped else stmt
+
+    def _scope_users(stmt):
+        return stmt.where(User.id.in_(team_users)) if scoped else stmt
+
+    total_orgs_result = await db.execute(
+        _scope_users(
+            select(func.count(func.distinct(User.org_id))).where(User.org_id.isnot(None))
+        )
+    )
     total_orgs = total_orgs_result.scalar() or 0
-    
-    base_active_orgs = _apply_org_filter(
-        select(func.count(func.distinct(AnalyticsEvent.organization_id))).where(
-            AnalyticsEvent.created_at >= cutoff,
-            AnalyticsEvent.organization_id.isnot(None)
+
+    active_orgs_30d = (await db.execute(
+        _scope_events(
+            select(func.count(func.distinct(AnalyticsEvent.organization_id))).where(
+                AnalyticsEvent.created_at >= cutoff,
+                AnalyticsEvent.organization_id.isnot(None)
+            )
         )
+    )).scalar() or 0
+
+    total_users_result = await db.execute(
+        _scope_users(select(func.count(User.id)).where(User.org_id.isnot(None)))
     )
-    active_orgs_30d = (await db.execute(base_active_orgs)).scalar() or 0
-    
-    base_total_users = _apply_org_filter(select(func.count(User.id)).where(User.org_id.isnot(None)))
-    total_users_result = await db.execute(base_total_users)
     total_users = total_users_result.scalar() or 0
-    
-    base_active_users = _apply_org_filter(
-        select(func.count(func.distinct(AnalyticsEvent.user_id))).where(
-            AnalyticsEvent.created_at >= cutoff,
-            AnalyticsEvent.user_id.isnot(None)
+
+    active_users_30d = (await db.execute(
+        _scope_events(
+            select(func.count(func.distinct(AnalyticsEvent.user_id))).where(
+                AnalyticsEvent.created_at >= cutoff,
+                AnalyticsEvent.user_id.isnot(None)
+            )
         )
-    )
-    active_users_30d = (await db.execute(base_active_users)).scalar() or 0
-    
-    total_events_result = _apply_org_filter(
-        select(func.count(AnalyticsEvent.id)).where(AnalyticsEvent.created_at >= cutoff)
-    )
-    total_events_30d = (await db.execute(total_events_result)).scalar() or 0
-    
+    )).scalar() or 0
+
+    total_events_30d = (await db.execute(
+        _scope_events(
+            select(func.count(AnalyticsEvent.id)).where(AnalyticsEvent.created_at >= cutoff)
+        )
+    )).scalar() or 0
+
     avg_events = total_events_30d / active_orgs_30d if active_orgs_30d > 0 else 0
-    
-    onboarding_events_result = _apply_org_filter(
-        select(func.count(AnalyticsEvent.id)).where(
-            AnalyticsEvent.created_at >= cutoff,
-            AnalyticsEvent.event_type == 'onboarding_completion'
+
+    onboarding_events = (await db.execute(
+        _scope_events(
+            select(func.count(AnalyticsEvent.id)).where(
+                AnalyticsEvent.created_at >= cutoff,
+                AnalyticsEvent.event_type == 'onboarding_completion'
+            )
         )
-    )
-    onboarding_events = (await db.execute(onboarding_events_result)).scalar() or 0
+    )).scalar() or 0
     onboarding_completion_rate = (onboarding_events / active_orgs_30d * 100) if active_orgs_30d > 0 else 0
-    
-    adoption_query = _apply_org_filter(
+
+    adoption_query = _scope_events(
         select(
             AnalyticsEvent.organization_id,
             AnalyticsEvent.event_type,
@@ -551,11 +612,9 @@ async def get_pilot_engagement(
     adoption_by_org: dict = {}
     for row in (await db.execute(adoption_query)).all():
         org_id = str(row[0]) if row[0] else 'unknown'
-        if org_id not in adoption_by_org:
-            adoption_by_org[org_id] = 0
-        adoption_by_org[org_id] += row[2]
-    
-    recent_orgs_query = _apply_org_filter(
+        adoption_by_org[org_id] = adoption_by_org.get(org_id, 0) + row[2]
+
+    recent_orgs_query = _scope_events(
         select(
             AnalyticsEvent.organization_id,
             func.max(AnalyticsEvent.created_at).label('last_activity')
@@ -577,36 +636,38 @@ async def get_pilot_engagement(
                 organization_name=org_name,
                 last_activity=last_activity.isoformat() if last_activity else ""
             ))
-    
+
     trends = []
     for i in range(min(days, 7)):
         day = now - timedelta(days=i)
         day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
-        
-        day_orgs_query = _apply_org_filter(
-            select(func.count(func.distinct(AnalyticsEvent.organization_id))).where(
-                AnalyticsEvent.created_at >= day_start,
-                AnalyticsEvent.created_at < day_end,
-                AnalyticsEvent.organization_id.isnot(None)
+
+        day_orgs = (await db.execute(
+            _scope_events(
+                select(func.count(func.distinct(AnalyticsEvent.organization_id))).where(
+                    AnalyticsEvent.created_at >= day_start,
+                    AnalyticsEvent.created_at < day_end,
+                    AnalyticsEvent.organization_id.isnot(None)
+                )
             )
-        )
-        day_orgs = (await db.execute(day_orgs_query)).scalar() or 0
-        
-        day_events_query = _apply_org_filter(
-            select(func.count(AnalyticsEvent.id)).where(
-                AnalyticsEvent.created_at >= day_start,
-                AnalyticsEvent.created_at < day_end
+        )).scalar() or 0
+
+        day_events = (await db.execute(
+            _scope_events(
+                select(func.count(AnalyticsEvent.id)).where(
+                    AnalyticsEvent.created_at >= day_start,
+                    AnalyticsEvent.created_at < day_end
+                )
             )
-        )
-        day_events = (await db.execute(day_events_query)).scalar() or 0
-        
+        )).scalar() or 0
+
         trends.append(EngagementTrendPoint(
             date=day.strftime("%Y-%m-%d"),
             active_organizations=day_orgs,
             total_events=day_events
         ))
-    
+
     trends.reverse()
     
     return PilotEngagementResponse(
@@ -703,7 +764,13 @@ async def get_compliance_summary_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    """GET /api/analytics/compliance/summary - compliance summary for dashboard."""
+    """GET /api/analytics/compliance/summary - compliance summary for dashboard.
+
+    The underlying ``mv_compliance_summary`` is a platform-wide aggregate with no
+    tenant dimension, so it cannot be safely scoped to one team. Mid-650 keeps it
+    admin-only rather than leak every tenant's counts to any authenticated user.
+    """
+    _require_platform_admin(current_user)
     data = await get_compliance_summary(db)
     return data
 
@@ -714,7 +781,12 @@ async def get_compliance_trends_endpoint(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    """GET /api/analytics/compliance/trends?days=N - compliance trends."""
+    """GET /api/analytics/compliance/trends?days=N - compliance trends.
+
+    ``mv_compliance_trends`` is platform-wide with no tenant dimension; admin-only
+    until a team-scoped aggregate exists (MID-650).
+    """
+    _require_platform_admin(current_user)
     data = await get_compliance_trends(db, days=days)
     return data
 
@@ -728,7 +800,10 @@ async def get_recent_alerts_endpoint(
     current_user: TokenData = Depends(get_current_user)
 ):
     """GET /api/analytics/alerts/recent - recent alert notifications."""
-    data = await get_recent_alerts(db, status=status, limit=limit, offset=offset)
+    team_id = await _require_caller_team_id(db, current_user)
+    data = await get_recent_alerts(
+        db, status=status, limit=limit, offset=offset, team_id=team_id
+    )
     return data
 
 
@@ -740,7 +815,10 @@ async def get_projects_endpoint(
     current_user: TokenData = Depends(get_current_user)
 ):
     """GET /api/analytics/projects - project compliance summaries."""
-    data = await get_all_project_compliance(db, limit=limit, offset=offset)
+    team_id = await _require_caller_team_id(db, current_user)
+    data = await get_all_project_compliance(
+        db, limit=limit, offset=offset, team_id=team_id
+    )
     return data
 
 
@@ -755,10 +833,12 @@ async def get_compliance_export_endpoint(
     current_user: TokenData = Depends(get_current_user)
 ):
     """GET /api/analytics/compliance/export - certification export (CSV or JSON)."""
+    team_id = await _require_caller_team_id(db, current_user)
     data = await get_certification_export_rows(
         db,
         expiration_bucket=expiration_bucket,
         subcontractor_id=subcontractor_id,
+        team_id=team_id,
         limit=limit,
         offset=offset
     )
