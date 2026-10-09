@@ -20,6 +20,18 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Recreate from scratch: migration 004 also creates mv_compliance_summary
+    # (with a different shape), so drop any existing instances first to ensure
+    # this revision's view definitions and their indexes are the ones present.
+    for _view in (
+        "mv_recent_alerts",
+        "mv_project_compliance",
+        "mv_certification_status",
+        "mv_compliance_trends",
+        "mv_compliance_summary",
+    ):
+        op.execute(f"DROP MATERIALIZED VIEW IF EXISTS {_view} CASCADE;")
+
     # =====================================================================
     # 1. mv_compliance_summary â€” used by GET /api/compliance/summary
     # =====================================================================
