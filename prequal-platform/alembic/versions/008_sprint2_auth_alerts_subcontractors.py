@@ -8,7 +8,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = '008_sprint2_auth_alerts_subcontractors'
+revision = '008_sprint2_orgs_alerts'
 down_revision = '007_password_reset'
 branch_labels = None
 depends_on = None

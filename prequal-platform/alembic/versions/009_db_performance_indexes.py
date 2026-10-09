@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = '009_db_performance_indexes'
-down_revision = '008_sprint2_auth_alerts_subcontractors'
+down_revision = '008_sprint2_orgs_alerts'
 branch_labels = None
 depends_on = None
 

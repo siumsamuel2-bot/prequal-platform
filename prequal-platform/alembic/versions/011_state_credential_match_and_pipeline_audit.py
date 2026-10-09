@@ -14,7 +14,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID, JSON
 
-revision = "011_state_credential_match_and_pipeline_audit"
+revision = "011_state_cred_pipeline_audit"
 down_revision = "010_analytics_materialized_views"
 branch_labels = None
 depends_on = None

@@ -13,7 +13,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = '022_feature_adoption_and_system_health'
+revision = '022_feature_adoption_health'
 down_revision = '021_add_password_history'
 branch_labels = None
 depends_on = None

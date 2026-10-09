@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = '012_security_audit_lockout'
-down_revision: Union[str, None] = '011_state_credential_match_and_pipeline_audit'
+down_revision: Union[str, None] = '011_state_cred_pipeline_audit'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
