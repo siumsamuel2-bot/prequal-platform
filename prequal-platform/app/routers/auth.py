@@ -221,13 +221,19 @@ async def _issue_tokens_for_user(
     team_id = await _primary_team_id(db, user.id)
     jti = str(uuid4())
     access_token = create_access_token(
-        data={"sub": user.email, "user_id": str(user.id), "role": user.role, "team_id": team_id},
+        data={
+            "sub": user.email,
+            "user_id": str(user.id),
+            "role": user.role,
+            "team_id": team_id,
+            "mfa_satisfied": True,
+        },
         password_changed_at=user.password_changed_at,
         jti=jti,
     )
     await _start_session(db, request, user, jti)
     refresh_token, _ = await create_and_store_refresh_token(
-        db, user.id, user.password_changed_at
+        db, user.id, user.password_changed_at, mfa_satisfied=True
     )
     return TokenRefreshResponse(
         access_token=access_token,
@@ -258,7 +264,8 @@ def create_refresh_token(data: dict, password_changed_at: Optional[datetime] = N
 async def create_and_store_refresh_token(
     db: AsyncSession,
     user_id: UUID,
-    password_changed_at: Optional[datetime] = None
+    password_changed_at: Optional[datetime] = None,
+    mfa_satisfied: bool = False,
 ) -> tuple[str, str]:
     jti = str(uuid4())
     expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS, hours=REFRESH_TOKEN_EXPIRE_HOURS)
@@ -270,6 +277,7 @@ async def create_and_store_refresh_token(
         "iat": datetime.utcnow(),
         "nbf": datetime.utcnow(),
         "jti": jti,
+        "mfa_satisfied": bool(mfa_satisfied),
     }
     if password_changed_at:
         to_encode["password_changed_at"] = password_changed_at.isoformat() if isinstance(password_changed_at, datetime) else password_changed_at
@@ -326,6 +334,11 @@ async def get_current_user(
         detail="Session is invalid or has expired. Please log in again.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    mfa_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="MFA verification required. Please log in again.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "access":
@@ -359,6 +372,12 @@ async def get_current_user(
         if session is None or str(session.user_id) != str(user.id):
             raise session_exception
 
+        # MFA enforcement on every authenticated request: once an account has a
+        # second factor enabled, only access tokens minted after a successful
+        # MFA challenge (``mfa_satisfied``) may be used. Fail closed.
+        if user.mfa_enabled and not payload.get("mfa_satisfied"):
+            raise mfa_exception
+
         # Rotate the session and issue a fresh short-lived access token on every
         # request. Clients read the rotated token from the response header.
         new_jti = str(uuid4())
@@ -368,6 +387,7 @@ async def get_current_user(
                 "user_id": str(user.id),
                 "role": user.role,
                 "team_id": token_data.team_id,
+                "mfa_satisfied": bool(payload.get("mfa_satisfied")),
             },
             password_changed_at=user.password_changed_at,
             jti=new_jti,
@@ -673,6 +693,22 @@ async def refresh_token(
             user_pw_ts = user.password_changed_at.replace(tzinfo=None) if user.password_changed_at.tzinfo else user.password_changed_at
             if token_ts < user_pw_ts:
                 raise password_changed_exception
+
+        # MFA enforcement on the refresh path: a refresh token that was not
+        # minted after a successful second-factor challenge must never be able
+        # to mint fresh access tokens once MFA is enabled on the account.
+        if user.mfa_enabled and not payload.get("mfa_satisfied"):
+            await revoke_refresh_token(db, jti)
+            await log_auth_event(
+                db, "refresh_mfa_blocked", email=user.email, user_id=user.id,
+                ip_address=request.client.host if request and request.client else None,
+                status="failure",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="MFA verification required. Please log in again.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
     except jwt.ExpiredSignatureError:
         raise credentials_exception
     except jwt.InvalidTokenError:
@@ -691,13 +727,20 @@ async def refresh_token(
     
     access_jti = str(uuid4())
     access_token = create_access_token(
-        data={"sub": user.email, "user_id": str(user.id), "role": user.role, "team_id": team_id},
+        data={
+            "sub": user.email,
+            "user_id": str(user.id),
+            "role": user.role,
+            "team_id": team_id,
+            "mfa_satisfied": bool(payload.get("mfa_satisfied")),
+        },
         password_changed_at=user.password_changed_at,
         jti=access_jti,
     )
     await _start_session(db, request, user, access_jti)
     new_refresh_token, _ = await create_and_store_refresh_token(
-        db, user.id, user.password_changed_at
+        db, user.id, user.password_changed_at,
+        mfa_satisfied=bool(payload.get("mfa_satisfied")),
     )
     return TokenRefreshResponse(
         access_token=access_token,
@@ -923,6 +966,12 @@ async def mfa_verify(
     user.mfa_method = MFA_METHOD_TOTP
     await db.commit()
 
+    # Enrolling a second factor must invalidate every credential issued before
+    # MFA was active; otherwise a pre-enrolment refresh token bypasses MFA.
+    await revoke_all_user_sessions(db, user.id)
+    await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
+    await db.commit()
+
     await log_auth_event(
         db, "mfa_enabled", email=user.email, user_id=user.id,
         ip_address=request.client.host if request.client else None,
@@ -974,6 +1023,12 @@ async def mfa_disable(
     user.mfa_secret = None
     user.mfa_method = None
     user.mfa_backup_codes = None
+    await db.commit()
+
+    # Disabling MFA changes the account's security posture; force a fresh
+    # authentication rather than letting MFA-gated tokens outlive it.
+    await revoke_all_user_sessions(db, user.id)
+    await db.execute(delete(RefreshToken).where(RefreshToken.user_id == user.id))
     await db.commit()
 
     await log_auth_event(

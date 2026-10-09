@@ -228,6 +228,144 @@ async def test_mfa_full_lifecycle(async_client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_refresh_token_cannot_bypass_mfa_after_enrollment(
+    async_client: AsyncClient,
+):
+    """MID-652: a refresh token minted before MFA enrolment must stop working.
+
+    Regression test for the second-factor bypass: refresh must not re-issue
+    access tokens for an MFA-enabled account unless the refresh token itself
+    was minted after a successful second-factor challenge.
+    """
+    email, password, access_token = await _register(async_client)
+
+    # Obtain a refresh token *before* MFA is enabled (the vulnerability repro).
+    pre_mfa_login = await _login(async_client, email, password)
+    assert pre_mfa_login["status"] == 200, pre_mfa_login["json"]
+    pre_mfa_refresh = pre_mfa_login["json"]["refresh_token"]
+
+    enable, access_token = await _auth_request(
+        async_client,
+        "POST",
+        "/api/auth/mfa/enable",
+        access_token,
+        json={"password": password},
+    )
+    assert enable.status_code == 200, enable.text
+    secret = enable.json()["secret"]
+
+    verify, access_token = await _auth_request(
+        async_client,
+        "POST",
+        "/api/auth/mfa/verify",
+        access_token,
+        json={"token": pyotp.TOTP(secret).now()},
+    )
+    assert verify.status_code == 200, verify.text
+
+    # The pre-enrolment refresh token must no longer mint access tokens.
+    refresh = await async_client.post(
+        "/api/auth/refresh", json={"refresh_token": pre_mfa_refresh}
+    )
+    assert refresh.status_code == 401, refresh.text
+
+
+@pytest.mark.asyncio
+async def test_mfa_validated_refresh_token_can_refresh(async_client: AsyncClient):
+    """MID-652: tokens issued after a successful MFA challenge remain refreshable."""
+    email, password, access_token = await _register(async_client)
+
+    enable, access_token = await _auth_request(
+        async_client,
+        "POST",
+        "/api/auth/mfa/enable",
+        access_token,
+        json={"password": password},
+    )
+    assert enable.status_code == 200, enable.text
+    secret = enable.json()["secret"]
+
+    verify, access_token = await _auth_request(
+        async_client,
+        "POST",
+        "/api/auth/mfa/verify",
+        access_token,
+        json={"token": pyotp.TOTP(secret).now()},
+    )
+    assert verify.status_code == 200, verify.text
+
+    gated = await _login(async_client, email, password)
+    assert gated["status"] == 403
+    assert gated["json"]["detail"].startswith("MFA_REQUIRED:")
+
+    validate = await async_client.post(
+        f"/api/auth/mfa/validate?user_id={gated['json']['detail'].split(':')[1]}"
+        f"&mfa_token={pyotp.TOTP(secret).now()}"
+    )
+    assert validate.status_code == 200, validate.text
+    refresh_token = validate.json()["refresh_token"]
+
+    # A token minted *after* MFA must still be refreshable.
+    refresh = await async_client.post(
+        "/api/auth/refresh", json={"refresh_token": refresh_token}
+    )
+    assert refresh.status_code == 200, refresh.text
+    assert refresh.json()["access_token"]
+
+
+@pytest.mark.asyncio
+async def test_mfa_validated_access_token_authenticates_and_survives_rotation(
+    async_client: AsyncClient,
+):
+    """MID-652: an MFA-satisfied access token passes ``get_current_user``.
+
+    Also proves the ``mfa_satisfied`` claim is carried through the per-request
+    session rotation, so MFA-gated sessions are not broken by the new check.
+    """
+    email, password, access_token = await _register(async_client)
+
+    enable, access_token = await _auth_request(
+        async_client,
+        "POST",
+        "/api/auth/mfa/enable",
+        access_token,
+        json={"password": password},
+    )
+    assert enable.status_code == 200, enable.text
+    secret = enable.json()["secret"]
+
+    verify, access_token = await _auth_request(
+        async_client,
+        "POST",
+        "/api/auth/mfa/verify",
+        access_token,
+        json={"token": pyotp.TOTP(secret).now()},
+    )
+    assert verify.status_code == 200, verify.text
+
+    gated = await _login(async_client, email, password)
+    assert gated["status"] == 403
+    validate = await async_client.post(
+        f"/api/auth/mfa/validate?user_id={gated['json']['detail'].split(':')[1]}"
+        f"&mfa_token={pyotp.TOTP(secret).now()}"
+    )
+    assert validate.status_code == 200, validate.text
+    mfa_access = validate.json()["access_token"]
+
+    # First authenticated request with the MFA-satisfied access token.
+    status, mfa_access = await _auth_request(
+        async_client, "GET", "/api/auth/mfa/status", mfa_access
+    )
+    assert status.status_code == 200, status.text
+
+    # Second request uses the rotated token; the claim must be preserved.
+    status2, mfa_access = await _auth_request(
+        async_client, "GET", "/api/auth/mfa/status", mfa_access
+    )
+    assert status2.status_code == 200, status2.text
+
+
+@pytest.mark.asyncio
 async def test_change_password_enforces_policy_and_history(async_client: AsyncClient):
     from app.models.auth import User
     from sqlalchemy import select

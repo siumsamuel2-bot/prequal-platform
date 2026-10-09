@@ -6,6 +6,7 @@ Covers:
 - Rotation on each authenticated request
 - Revocation on logout / password change
 - Middleware (get_current_user) enforcing expiry and rotation
+- Max rotation limit enforcement
 
 These tests exercise the session layer directly so they do not depend on
 password hashing backends.
@@ -18,6 +19,7 @@ from fastapi import HTTPException
 
 from app.models.auth import User
 from app.routers.auth import create_access_token, get_current_user
+from app.models.session import MAX_SESSION_ROTATIONS
 from app.services.session_manager import (
     SESSION_EXPIRE_MINUTES,
     create_session,
@@ -177,3 +179,26 @@ async def test_get_current_user_rejects_token_after_password_change(db_session):
         await get_current_user(token=token, db=db_session)
     assert exc_info.value.status_code == 401
     assert "password change" in exc_info.value.detail.lower()
+
+
+@pytest.mark.asyncio
+async def test_rotate_session_max_limit(db_session):
+    user = await _make_user(db_session)
+    jti = str(uuid.uuid4())
+    session = await create_session(db_session, user.id, jti)
+
+    # Rotate until reaching the max limit (200)
+    for _ in range(MAX_SESSION_ROTATIONS):
+        new_jti = str(uuid.uuid4())
+        await rotate_session(db_session, session, new_jti)
+
+    # The session should now be inactive after exceeding max rotations
+    assert await validate_session(db_session, jti) is None
+
+    # Attempting to validate the last jti should raise 401
+    from fastapi import HTTPException
+    from starlette.status import HTTP_401_UNAUTHORIZED
+    with pytest.raises(HTTPException) as exc_info:
+        await rotate_session(db_session, session, str(uuid.uuid4()))
+    assert exc_info.value.status_code == HTTP_401_UNAUTHORIZED
+    assert "maximum rotation limit" in exc_info.value.detail
