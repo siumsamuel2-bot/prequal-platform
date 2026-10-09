@@ -34,6 +34,7 @@ from app.schemas.compliance import (
     ComplianceSummaryResponse, ComplianceTrendPoint, CertificationExportRow
 )
 from app.routers.auth import get_current_user, TokenData
+from app.services.tenancy import require_caller_team_id as _resolve_caller_team_id
 from app.services.analytics_pipeline import (
     get_compliance_summary,
     get_compliance_trends,
@@ -60,6 +61,16 @@ async def _invalidate_compliance_cache(team_id: Optional[UUID]) -> None:
         await cache_service.invalidate_team_cache(team_id)
     except Exception:  # pragma: no cover - cache must never break a write
         logger.warning("Failed to invalidate compliance cache", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Tenant isolation (MID-651 / HIGH fail-open fix)
+#
+# Compliance reads resolve the caller's team from the shared, fail-closed
+# ``app.services.tenancy`` helper (the same one used by analytics and modelled
+# on ``alerts.py``). Non-admins with no live membership are denied (403); admins
+# are intentionally platform-wide. The JWT ``team_id`` claim is never trusted.
+# ---------------------------------------------------------------------------
 
 
 @router.get("/cache/stats")
@@ -217,7 +228,7 @@ async def get_subcontractors(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user),
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     cache_key = build_cache_key(
         "subcontractors",
         team_id=str(team_id),
@@ -255,7 +266,10 @@ async def get_subcontractors(
         query = query.where(Subcontractor.status == status_filter.value)
 
     if search:
-        search_term = f"%{search}%"
+        import re
+        # Sanitize search term: escape special LIKE characters and limit length
+        safe_search = re.sub(r'[%_\\*]', r'\\\g<0>', search)
+        search_term = f"%{safe_search}%"
         query = query.where(
             or_(
                 Subcontractor.company_name.ilike(search_term),
@@ -305,9 +319,30 @@ async def get_subcontractor(
     subcontractor_id: UUID,
     request: Request = None,
     db: AsyncSession = Depends(get_db),
-    current_user: TokenData = Depends(get_current_user)
+    current_user: TokenData = Depends(get_current_user),
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
+    cache_key = build_cache_key(
+        "subcontractor",
+        team_id=str(team_id),
+        subcontractor_id=str(subcontractor_id),
+    )
+
+    cached = await cache_service.get(cache_key)
+    if cached is not None:
+        if request:
+            client_ip = request.client.host if request.client else None
+            await log_data_access(
+                db=db,
+                action="cache_hit",
+                resource="subcontractor",
+                resource_id="detail",
+                user_id=UUID(current_user.user_id),
+                ip_address=client_ip,
+                details=f"Cache hit for subcontractor detail (key: {cache_key[:16]}...)"
+            )
+        return cached
+
     conditions = [Subcontractor.id == subcontractor_id]
     if team_id:
         conditions.append(Subcontractor.team_id == team_id)
@@ -331,19 +366,7 @@ async def get_subcontractor(
     active_projects = sum(1 for a in subcontractor.project_assignments if a.status == "active")
     compliance_score = await get_subcontractor_compliance_score(db, subcontractor_id)
 
-    if request:
-        client_ip = request.client.host if request.client else None
-        await log_data_access(
-            db=db,
-            action="read",
-            resource="subcontractor",
-            resource_id=str(subcontractor_id),
-            user_id=UUID(current_user.user_id),
-            ip_address=client_ip,
-            details=f"Read subcontractor: {subcontractor.company_name}"
-        )
-
-    return SubcontractorWithDetails(
+    response = SubcontractorWithDetails(
         **{
             "id": str(subcontractor.id),
             "company_name": subcontractor.company_name,
@@ -375,6 +398,22 @@ async def get_subcontractor(
         compliance_score=compliance_score
     )
 
+    await cache_service.set(cache_key, response)
+
+    if request:
+        client_ip = request.client.host if request.client else None
+        await log_data_access(
+            db=db,
+            action="cache_miss",
+            resource="subcontractor",
+            resource_id="detail",
+            user_id=UUID(current_user.user_id),
+            ip_address=client_ip,
+            details=f"Cache miss for subcontractor detail (key: {cache_key[:16]}...)"
+        )
+
+    return response
+
 
 @router.post("/subcontractors", response_model=SubcontractorResponse, status_code=status.HTTP_201_CREATED)
 async def create_subcontractor(
@@ -383,7 +422,7 @@ async def create_subcontractor(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     result = await db.execute(
         select(Subcontractor).where(Subcontractor.email == subcontractor.email)
     )
@@ -427,7 +466,7 @@ async def update_subcontractor(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     conditions = [Subcontractor.id == subcontractor_id]
     if team_id:
         conditions.append(Subcontractor.team_id == team_id)
@@ -478,7 +517,7 @@ async def delete_subcontractor(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     conditions = [Subcontractor.id == subcontractor_id]
     if team_id:
         conditions.append(Subcontractor.team_id == team_id)
@@ -549,7 +588,7 @@ async def get_subcontractor_certifications(
     current_user: TokenData = Depends(get_current_user)
 ):
     """List all certifications held by a subcontractor."""
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     await _get_subcontractor_scoped(db, subcontractor_id, team_id)
 
     conditions = [Certification.subcontractor_id == subcontractor_id]
@@ -590,7 +629,7 @@ async def add_subcontractor_certification(
     current_user: TokenData = Depends(get_current_user)
 ):
     """Add a certification to a subcontractor."""
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     await _get_subcontractor_scoped(db, subcontractor_id, team_id)
 
     db_certification = Certification(
@@ -629,7 +668,7 @@ async def remove_subcontractor_certification(
     current_user: TokenData = Depends(get_current_user)
 ):
     """Remove a certification from a subcontractor (scoped to that sub)."""
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     await _get_subcontractor_scoped(db, subcontractor_id, team_id)
 
     result = await db.execute(
@@ -675,7 +714,7 @@ async def get_certifications(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Certification).join(Subcontractor, Certification.subcontractor_id == Subcontractor.id)
 
     if team_id:
@@ -713,7 +752,7 @@ async def get_certification(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Certification).join(Subcontractor, Certification.subcontractor_id == Subcontractor.id).where(Certification.id == certification_id)
     if team_id:
         query = query.where(Subcontractor.team_id == team_id)
@@ -748,7 +787,7 @@ async def create_certification(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     conditions = [Subcontractor.id == certification.subcontractor_id]
     if team_id:
         conditions.append(Subcontractor.team_id == team_id)
@@ -792,7 +831,7 @@ async def update_certification(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Certification).join(Subcontractor, Certification.subcontractor_id == Subcontractor.id).where(Certification.id == certification_id)
     if team_id:
         query = query.where(Subcontractor.team_id == team_id)
@@ -836,7 +875,7 @@ async def delete_certification(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Certification).join(Subcontractor, Certification.subcontractor_id == Subcontractor.id).where(Certification.id == certification_id)
     if team_id:
         query = query.where(Subcontractor.team_id == team_id)
@@ -873,7 +912,7 @@ async def get_contractor_certifications(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Certification, Subcontractor.company_name)\
         .join(Subcontractor, Certification.subcontractor_id == Subcontractor.id)\
         .where(and_(
@@ -903,7 +942,7 @@ async def get_violations(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Violation).join(Subcontractor, Violation.subcontractor_id == Subcontractor.id)
 
     if team_id:
@@ -941,7 +980,7 @@ async def get_violation(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Violation).join(Subcontractor, Violation.subcontractor_id == Subcontractor.id).where(Violation.id == violation_id)
     if team_id:
         query = query.where(Subcontractor.team_id == team_id)
@@ -976,7 +1015,7 @@ async def create_violation(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     conditions = [Subcontractor.id == violation.subcontractor_id]
     if team_id:
         conditions.append(Subcontractor.team_id == team_id)
@@ -1020,7 +1059,7 @@ async def update_violation(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Violation).join(Subcontractor, Violation.subcontractor_id == Subcontractor.id).where(Violation.id == violation_id)
     if team_id:
         query = query.where(Subcontractor.team_id == team_id)
@@ -1064,7 +1103,7 @@ async def delete_violation(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Violation).join(Subcontractor, Violation.subcontractor_id == Subcontractor.id).where(Violation.id == violation_id)
     if team_id:
         query = query.where(Subcontractor.team_id == team_id)
@@ -1101,7 +1140,7 @@ async def get_contractor_violations(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Violation, Subcontractor.company_name)\
         .join(Subcontractor, Violation.subcontractor_id == Subcontractor.id)\
         .where(and_(
@@ -1130,7 +1169,7 @@ async def get_projects(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     query = select(Project)
 
     if team_id:
@@ -1170,7 +1209,7 @@ async def get_project(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     conditions = [Project.id == project_id]
     if team_id:
         conditions.append(Project.team_id == team_id)
@@ -1212,7 +1251,7 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     db_project = Project(**project.model_dump())
     if team_id:
         db_project.team_id = team_id
@@ -1248,7 +1287,7 @@ async def update_project(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     conditions = [Project.id == project_id]
     if team_id:
         conditions.append(Project.team_id == team_id)
@@ -1302,7 +1341,7 @@ async def delete_project(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     conditions = [Project.id == project_id]
     if team_id:
         conditions.append(Project.team_id == team_id)
@@ -1340,7 +1379,7 @@ async def get_project_subcontractors(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     conditions = [Project.id == project_id]
     if team_id:
         conditions.append(Project.team_id == team_id)
@@ -1414,7 +1453,7 @@ async def quick_add_subcontractor_to_project(
     Creates the subcontractor, assigns them to the project, and returns
     compliance status including any auto-detected issues.
     """
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     conditions = [Project.id == project_id]
     if team_id:
         conditions.append(Project.team_id == team_id)
@@ -1502,7 +1541,7 @@ async def get_compliance_status(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     if project_id:
         project_conditions = [Project.id == project_id]
         if team_id:
@@ -1605,7 +1644,7 @@ async def get_compliance_alerts(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     thirty_days_from_now = date.today() + timedelta(days=30)
     
     query = select(Certification, Subcontractor.company_name)\
@@ -1643,7 +1682,7 @@ async def get_dashboard_summary(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
 
     cache_key = build_cache_key("compliance:dashboard:summary", team_id)
     cached = await cache_service.get(cache_key)
@@ -1754,7 +1793,7 @@ async def compliance_summary(
     current_user: TokenData = Depends(get_current_user),
 ):
     """Return a single-row compliance summary for the dashboard card view."""
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     cache_key = build_cache_key("compliance:summary", team_id)
     cached = await cache_service.get(cache_key)
     if cached is not None:
@@ -1772,7 +1811,7 @@ async def compliance_trends(
     current_user: TokenData = Depends(get_current_user),
 ):
     """Return daily compliance trend points for the last ``days`` days."""
-    team_id = UUID(current_user.team_id) if current_user.team_id else None
+    team_id = await _resolve_caller_team_id(db, current_user)
     cache_key = build_cache_key("compliance:trends", team_id, days=days)
     cached = await cache_service.get(cache_key)
     if cached is not None:

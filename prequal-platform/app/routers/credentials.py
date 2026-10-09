@@ -20,6 +20,7 @@ from app.schemas.credential_upload import (
 )
 from app.services.credential_service import CredentialUploadService
 from app.routers.auth import get_current_user, TokenData
+from app.services.tenancy import require_caller_team_id as _resolve_caller_team_id
 
 router = APIRouter(prefix="/api", tags=["credentials"])
 
@@ -28,10 +29,6 @@ upload_service = CredentialUploadService()
 
 def convert_mime_type(mime_type: str) -> str:
     return mime_type.lower().strip()
-
-
-def _team_id_from_user(current_user: TokenData) -> Optional[uuid.UUID]:
-    return uuid.UUID(current_user.team_id) if current_user.team_id else None
 
 
 async def _get_subcontractor_scoped(
@@ -84,7 +81,7 @@ async def upload_credential(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = _team_id_from_user(current_user)
+    team_id = await _resolve_caller_team_id(db, current_user)
     await _get_subcontractor_scoped(db, subcontractor_id, team_id)
     
     content = await file.read()
@@ -133,7 +130,7 @@ async def get_subcontractor_uploads(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = _team_id_from_user(current_user)
+    team_id = await _resolve_caller_team_id(db, current_user)
     await _get_subcontractor_scoped(db, subcontractor_id, team_id)
     
     query = (
@@ -172,7 +169,7 @@ async def get_upload(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = _team_id_from_user(current_user)
+    team_id = await _resolve_caller_team_id(db, current_user)
     upload = await _get_upload_scoped(db, upload_id, team_id)
     
     return CredentialUploadWithExtraction(
@@ -203,7 +200,7 @@ async def process_upload(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = _team_id_from_user(current_user)
+    team_id = await _resolve_caller_team_id(db, current_user)
     upload = await _get_upload_scoped(db, upload_id, team_id)
     
     if upload.status == UploadStatus.PROCESSING.value:
@@ -250,7 +247,7 @@ async def create_certification_from_upload(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = _team_id_from_user(current_user)
+    team_id = await _resolve_caller_team_id(db, current_user)
     upload = await _get_upload_scoped(db, upload_id, team_id)
     
     if upload.certification_id:
@@ -305,7 +302,7 @@ async def delete_upload(
     db: AsyncSession = Depends(get_db),
     current_user: TokenData = Depends(get_current_user)
 ):
-    team_id = _team_id_from_user(current_user)
+    team_id = await _resolve_caller_team_id(db, current_user)
     upload = await _get_upload_scoped(db, upload_id, team_id)
     
     await upload_service.delete_uploaded_file(upload.stored_filename)
