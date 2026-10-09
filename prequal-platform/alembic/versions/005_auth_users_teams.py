@@ -50,7 +50,7 @@ def upgrade() -> None:
     )
     op.create_index('idx_team_members_team_id', 'team_members', ['team_id'])
     op.create_index('idx_team_members_user_id', 'team_members', ['user_id'])
-    op.create_index(None, 'team_members', ['team_id', 'user_id'], unique=True, name='uq_team_member')
+    op.create_index('uq_team_member', 'team_members', ['team_id', 'user_id'], unique=True)
 
     op.add_column('projects', sa.Column('team_id', postgresql.UUID(as_uuid=True), sa.ForeignKey('teams.id', ondelete='SET NULL'), nullable=True))
     op.create_index('idx_projects_team_id', 'projects', ['team_id'])
