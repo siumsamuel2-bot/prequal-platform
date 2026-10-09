@@ -142,6 +142,28 @@ def _run_alembic_migrations(revision: str) -> None:
         _schema_initialized = True
 
 
+def _reset_pg_schema() -> None:
+    """Drop and recreate the public schema on the disposable PG test database.
+
+    Guarantees ``alembic upgrade head`` always applies against an empty schema,
+    so model tables pre-created by ``Base.metadata.create_all`` (which can run
+    at import/lifespan time) cannot collide with migrations that use
+    non-idempotent ``op.create_table`` / ``op.add_column`` (e.g. 005+).
+    CI PostgreSQL is disposable.
+    """
+    import psycopg2
+
+    dsn = _pg_test_url.replace("+asyncpg", "").replace("+psycopg2", "")
+    conn = psycopg2.connect(dsn)
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("DROP SCHEMA IF EXISTS public CASCADE")
+            cur.execute("CREATE SCHEMA public")
+    finally:
+        conn.close()
+
+
 def pytest_configure(config) -> None:
     """Build the PostgreSQL test schema before test collection (MID-645).
 
@@ -156,6 +178,7 @@ def pytest_configure(config) -> None:
     ``db_engine`` fixture's later call a no-op.
     """
     if _use_postgres:
+        _reset_pg_schema()
         _run_alembic_migrations("head")
 
 
