@@ -1,4 +1,4 @@
-"""Analytics Materialized Views for Dashboard API
+﻿"""Analytics Materialized Views for Dashboard API
 
 Revision ID: 010_analytics_materialized_views
 Revises: 009_db_performance_indexes
@@ -21,10 +21,10 @@ depends_on = None
 
 def upgrade() -> None:
     # =====================================================================
-    # 1. mv_compliance_summary — used by GET /api/compliance/summary
+    # 1. mv_compliance_summary â€” used by GET /api/compliance/summary
     # =====================================================================
     op.execute("""
-        CREATE MATERIALIZED VIEW mv_compliance_summary AS
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_compliance_summary AS
         SELECT
             COUNT(DISTINCT s.id) AS total_subcontractors,
             COUNT(DISTINCT CASE WHEN s.status = 'active' THEN s.id END) AS active_subcontractors,
@@ -68,15 +68,15 @@ def upgrade() -> None:
 
     # Unique index on the single-row materialized view
     op.execute("""
-        CREATE UNIQUE INDEX idx_mv_compliance_summary_computed
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_compliance_summary_computed
         ON mv_compliance_summary(computed_at);
     """)
 
     # =====================================================================
-    # 2. mv_compliance_trends — used by GET /api/compliance/trends
+    # 2. mv_compliance_trends â€” used by GET /api/compliance/trends
     # =====================================================================
     op.execute("""
-        CREATE MATERIALIZED VIEW mv_compliance_trends AS
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_compliance_trends AS
         WITH daily_compliance AS (
             SELECT
                 generate_series::date AS trend_date,
@@ -120,15 +120,15 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE UNIQUE INDEX idx_mv_compliance_trends_date
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_compliance_trends_date
         ON mv_compliance_trends(trend_date);
     """)
 
     # =====================================================================
-    # 3. mv_certification_status — used by GET /api/compliance/summary & export
+    # 3. mv_certification_status â€” used by GET /api/compliance/summary & export
     # =====================================================================
     op.execute("""
-        CREATE MATERIALIZED VIEW mv_certification_status AS
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_certification_status AS
         SELECT
             s.id AS subcontractor_id,
             s.company_name,
@@ -159,25 +159,25 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE UNIQUE INDEX idx_mv_cert_status_cert_id
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_cert_status_cert_id
         ON mv_certification_status(certification_id);
     """)
 
     op.execute("""
-        CREATE INDEX idx_mv_cert_status_exp_bucket
+        CREATE INDEX IF NOT EXISTS idx_mv_cert_status_exp_bucket
         ON mv_certification_status(expiration_bucket);
     """)
 
     op.execute("""
-        CREATE INDEX idx_mv_cert_status_sub_id
+        CREATE INDEX IF NOT EXISTS idx_mv_cert_status_sub_id
         ON mv_certification_status(subcontractor_id);
     """)
 
     # =====================================================================
-    # 4. mv_project_compliance — used by GET /api/compliance/summary
+    # 4. mv_project_compliance â€” used by GET /api/compliance/summary
     # =====================================================================
     op.execute("""
-        CREATE MATERIALIZED VIEW mv_project_compliance AS
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_project_compliance AS
         SELECT
             p.id AS project_id,
             p.project_name,
@@ -216,15 +216,15 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE UNIQUE INDEX idx_mv_project_compliance_project
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_project_compliance_project
         ON mv_project_compliance(project_id);
     """)
 
     # =====================================================================
-    # 5. mv_recent_alerts — used by GET /api/alerts/recent
+    # 5. mv_recent_alerts â€” used by GET /api/alerts/recent
     # =====================================================================
     op.execute("""
-        CREATE MATERIALIZED VIEW mv_recent_alerts AS
+        CREATE MATERIALIZED VIEW IF NOT EXISTS mv_recent_alerts AS
         SELECT
             an.id AS alert_id,
             an.certification_id,
@@ -252,17 +252,17 @@ def upgrade() -> None:
     """)
 
     op.execute("""
-        CREATE UNIQUE INDEX idx_mv_recent_alerts_alert_id
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_recent_alerts_alert_id
         ON mv_recent_alerts(alert_id);
     """)
 
     op.execute("""
-        CREATE INDEX idx_mv_recent_alerts_created
+        CREATE INDEX IF NOT EXISTS idx_mv_recent_alerts_created
         ON mv_recent_alerts(created_at DESC);
     """)
 
     op.execute("""
-        CREATE INDEX idx_mv_recent_alerts_status
+        CREATE INDEX IF NOT EXISTS idx_mv_recent_alerts_status
         ON mv_recent_alerts(status);
     """)
 
