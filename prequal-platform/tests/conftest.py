@@ -21,6 +21,10 @@ else:
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_test_db_path}"
 # Ensure the auth module can import during tests even without an ambient secret.
 os.environ.setdefault("SECRET_KEY", "test-secret-key-32-bytes-long-here")
+# Encryption key for PII migrations/services. Kept <32 chars on purpose: the
+# PBKDF2 branch is used (migration 016's key handling truncates >=32-char keys
+# to 32 bytes and feeds them to Fernet, which is invalid).
+os.environ.setdefault("ENCRYPTION_KEY", "test-encryption-key")
 
 import pytest_asyncio  # noqa: E402
 import pytest  # noqa: E402
