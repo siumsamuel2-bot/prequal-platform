@@ -10,6 +10,8 @@ import {
   BillingPlan,
 } from '../api/client';
 import { Loading } from './Loading';
+import { NoAccessState, isForbiddenError } from './NoAccessState';
+import { isAdmin } from '../utils/auth';
 import { useToast } from './ToastContext';
 import { Link } from 'react-router-dom';
 import {
@@ -77,42 +79,31 @@ const AnalyticsDashboard: React.FC = () => {
   const [plans, setPlans] = useState<BillingPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [engagementDenied, setEngagementDenied] = useState(false);
+
+  const isAdminUser = isAdmin();
 
   const loadAnalytics = useCallback(async () => {
     setLoading(true);
     const results = await Promise.allSettled([
       analyticsApi.getPilotEngagement(30),
-      analyticsApi.getFeatureAdoption({ days: 30 }),
-      analyticsApi.getSystemHealth(),
-      analyticsApi.getPerformanceMetrics(),
       billingApi.getSubscription(),
       billingApi.getPlans(),
     ]);
 
-    const [engagementResult, adoptionResult, healthResult, performanceResult, subscriptionResult, plansResult] = results;
+    const [engagementResult, subscriptionResult, plansResult] = results;
 
     if (engagementResult.status === 'fulfilled') {
       setEngagement(engagementResult.value);
+      setEngagementDenied(false);
+    } else if (isForbiddenError(engagementResult.reason) && !isAdminUser) {
+      // Fail-closed 403 for this account (no resolvable team): show the calm
+      // no-access state instead of an alarming error toast (MID-657).
+      setEngagement(null);
+      setEngagementDenied(true);
     } else {
+      setEngagementDenied(false);
       toast.error('Failed to load user growth metrics');
-    }
-
-    if (adoptionResult.status === 'fulfilled') {
-      setFeatureAdoption(adoptionResult.value ?? []);
-    } else {
-      toast.error('Failed to load feature adoption metrics');
-    }
-
-    if (healthResult.status === 'fulfilled') {
-      setSystemHealth(healthResult.value ?? []);
-    } else {
-      toast.error('Failed to load system health metrics');
-    }
-
-    if (performanceResult.status === 'fulfilled') {
-      setPerformance(performanceResult.value);
-    } else {
-      toast.error('Failed to load performance metrics');
     }
 
     if (subscriptionResult.status === 'fulfilled') {
@@ -125,9 +116,43 @@ const AnalyticsDashboard: React.FC = () => {
       setPlans(plansResult.value ?? []);
     }
 
+    // Platform-only aggregates are admin-only since MID-650; skip the fetch
+    // entirely for non-admins instead of showing the panels failing.
+    if (isAdminUser) {
+      const adminResults = await Promise.allSettled([
+        analyticsApi.getFeatureAdoption({ days: 30 }),
+        analyticsApi.getSystemHealth(),
+        analyticsApi.getPerformanceMetrics(),
+      ]);
+
+      const [adoptionResult, healthResult, performanceResult] = adminResults;
+
+      if (adoptionResult.status === 'fulfilled') {
+        setFeatureAdoption(adoptionResult.value ?? []);
+      } else {
+        toast.error('Failed to load feature adoption metrics');
+      }
+
+      if (healthResult.status === 'fulfilled') {
+        setSystemHealth(healthResult.value ?? []);
+      } else {
+        toast.error('Failed to load system health metrics');
+      }
+
+      if (performanceResult.status === 'fulfilled') {
+        setPerformance(performanceResult.value);
+      } else {
+        toast.error('Failed to load performance metrics');
+      }
+    } else {
+      setFeatureAdoption([]);
+      setSystemHealth([]);
+      setPerformance(null);
+    }
+
     setLoading(false);
     setLastRefreshed(new Date());
-  }, [toast]);
+  }, [toast, isAdminUser]);
 
   useEffect(() => {
     loadAnalytics();
@@ -180,14 +205,43 @@ const AnalyticsDashboard: React.FC = () => {
       color: '#ec4899',
     },
     { label: 'Seat Utilization', value: seatUtilization !== null ? `${seatUtilization}%` : '—', icon: '🔐', color: '#6366f1' },
-    { label: 'API Error Rate', value: formatPercent(performance?.error_rate_percent), icon: '⚠️', color: (performance?.error_rate_percent ?? 0) > 5 ? '#ef4444' : '#10b981' },
-    { label: 'Avg Response Time', value: formatMs(performance?.avg_response_time_ms), icon: '⏱️', color: '#0ea5e9' },
+    // Performance metrics are admin-only; hidden for non-admins (MID-657).
+    ...(isAdminUser
+      ? [
+          { label: 'API Error Rate', value: formatPercent(performance?.error_rate_percent), icon: '⚠️', color: (performance?.error_rate_percent ?? 0) > 5 ? '#ef4444' : '#10b981' },
+          { label: 'Avg Response Time', value: formatMs(performance?.avg_response_time_ms), icon: '⏱️', color: '#0ea5e9' },
+        ]
+      : []),
   ];
 
   if (loading && !lastRefreshed) {
     return (
       <div className="dashboard">
         <Loading message="Loading analytics..." fullScreen />
+      </div>
+    );
+  }
+
+  if (engagementDenied && !isAdminUser) {
+    return (
+      <div className="dashboard">
+        <div className="dashboard-header" style={{ backgroundColor: '#0ea5e9' }}>
+          <h1>Analytics Dashboard</h1>
+          <div className="dashboard-nav">
+            <span>Platform Growth & System Health</span>
+            <button
+              className="action-btn"
+              onClick={loadAnalytics}
+              disabled={loading}
+              aria-label="Refresh analytics data"
+            >
+              {loading ? 'Refreshing...' : '↻ Refresh'}
+            </button>
+          </div>
+        </div>
+        <div className="dashboard-content">
+          <NoAccessState variant="no-access" />
+        </div>
       </div>
     );
   }
@@ -265,12 +319,15 @@ const AnalyticsDashboard: React.FC = () => {
                       />
                     </AreaChart>
                   </ResponsiveContainer>
-                ) : (
+                ) : isAdminUser ? (
                   <p className="no-data-message">No engagement trend data available.</p>
+                ) : (
+                  <NoAccessState variant="no-data" />
                 )}
               </div>
             </div>
 
+            {!isAdminUser ? null : (
             <div className="chart-section">
               <div className="section-header">
                 <h2>Feature Adoption (Last 30 Days)</h2>
@@ -293,8 +350,9 @@ const AnalyticsDashboard: React.FC = () => {
                 )}
               </div>
             </div>
+            )}
 
-            <div className="charts-row">
+            <div className="charts-row" style={isAdminUser ? undefined : { gridTemplateColumns: '1fr' }}>
               <div className="chart-section half">
                 <h2>Revenue & Subscription</h2>
                 <div className="quick-stats">
@@ -380,6 +438,7 @@ const AnalyticsDashboard: React.FC = () => {
                 )}
               </div>
 
+              {isAdminUser ? (
               <div className="chart-section half">
                 <div className="section-header">
                   <h2>System Health by Service</h2>
@@ -422,10 +481,12 @@ const AnalyticsDashboard: React.FC = () => {
                   <p className="no-data-message">No system health data available.</p>
                 )}
               </div>
+              ) : null}
             </div>
           </div>
 
           <div className="dashboard-sidebar">
+            {isAdminUser ? (
             <div className="chart-section">
               <h2>Performance Summary</h2>
               <div className="quick-stats">
@@ -467,6 +528,7 @@ const AnalyticsDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+            ) : null}
 
             <div className="chart-section">
               <h2>Recently Active Organizations</h2>

@@ -4,7 +4,8 @@ import '@testing-library/jest-dom';
 import { MemoryRouter } from 'react-router-dom';
 import AnalyticsDashboard from '../components/AnalyticsDashboard';
 import { ToastProvider } from '../components/ToastContext';
-import { analyticsApi, billingApi } from '../api/client';
+import { ToastContainer } from '../components/ToastContainer';
+import { analyticsApi, billingApi, ApiError } from '../api/client';
 
 const mockEngagement = {
   total_organizations: 12,
@@ -84,24 +85,49 @@ const mockPlans = [
   { plan: 'enterprise', name: 'Enterprise', price: '$499/month', limit: 500, features: [] },
 ];
 
-jest.mock('../api/client', () => ({
-  analyticsApi: {
-    getPilotEngagement: jest.fn(),
-    getFeatureAdoption: jest.fn(),
-    getSystemHealth: jest.fn(),
-    getPerformanceMetrics: jest.fn(),
+jest.mock('../api/client', () => {
+  class ApiError extends Error {
+    constructor(message, status) {
+      super(message);
+      this.name = 'ApiError';
+      this.status = status;
+    }
+  }
+  return {
+    ApiError,
+    analyticsApi: {
+      getPilotEngagement: jest.fn(),
+      getFeatureAdoption: jest.fn(),
+      getSystemHealth: jest.fn(),
+      getPerformanceMetrics: jest.fn(),
+    },
+    billingApi: {
+      getSubscription: jest.fn(),
+      getPlans: jest.fn(),
+    },
+  };
+});
+
+const adminAuthState = {
+  user: {
+    id: 'user-1',
+    email: 'admin@example.com',
+    name: 'Admin User',
+    role: 'admin',
+    is_active: true,
+    created_at: '2026-01-01T00:00:00Z',
+    teams: [],
   },
-  billingApi: {
-    getSubscription: jest.fn(),
-    getPlans: jest.fn(),
-  },
-}));
+  token: 'test-token',
+  isAuthenticated: true,
+};
 
 const renderDashboard = () =>
   render(
     <MemoryRouter>
       <ToastProvider>
         <AnalyticsDashboard />
+        <ToastContainer />
       </ToastProvider>
     </MemoryRouter>
   );
@@ -119,12 +145,18 @@ describe('AnalyticsDashboard', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    localStorage.setItem('auth_state', JSON.stringify(adminAuthState));
     analyticsApi.getPilotEngagement.mockResolvedValue(mockEngagement);
     analyticsApi.getFeatureAdoption.mockResolvedValue(mockFeatureAdoption);
     analyticsApi.getSystemHealth.mockResolvedValue(mockSystemHealth);
     analyticsApi.getPerformanceMetrics.mockResolvedValue(mockPerformance);
     billingApi.getSubscription.mockResolvedValue(mockSubscription);
     billingApi.getPlans.mockResolvedValue(mockPlans);
+  });
+
+  afterEach(() => {
+    localStorage.removeItem('auth_state');
+    localStorage.removeItem('access_token');
   });
 
   test('renders KPI cards with data from all API endpoints', async () => {
@@ -267,5 +299,86 @@ describe('AnalyticsDashboard', () => {
     expect(
       screen.getByLabelText('prequal-api — response_time_ms health status: Warning')
     ).toBeInTheDocument();
+  });
+});
+
+describe('AnalyticsDashboard access states (MID-657)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    localStorage.removeItem('auth_state');
+    analyticsApi.getPilotEngagement.mockResolvedValue(mockEngagement);
+    analyticsApi.getFeatureAdoption.mockResolvedValue(mockFeatureAdoption);
+    analyticsApi.getSystemHealth.mockResolvedValue(mockSystemHealth);
+    analyticsApi.getPerformanceMetrics.mockResolvedValue(mockPerformance);
+    billingApi.getSubscription.mockResolvedValue(mockSubscription);
+    billingApi.getPlans.mockResolvedValue(mockPlans);
+  });
+
+  afterEach(() => {
+    localStorage.removeItem('auth_state');
+    localStorage.removeItem('access_token');
+  });
+
+  test('shows a calm no-access state and skips admin-only calls on 403 for non-admins', async () => {
+    analyticsApi.getPilotEngagement.mockRejectedValue(
+      new ApiError('Tenant scope could not be resolved for this account', 403)
+    );
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText("You don't have access to this data")).toBeInTheDocument();
+    });
+    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(analyticsApi.getFeatureAdoption).not.toHaveBeenCalled();
+    expect(analyticsApi.getSystemHealth).not.toHaveBeenCalled();
+    expect(analyticsApi.getPerformanceMetrics).not.toHaveBeenCalled();
+    expect(billingApi.getSubscription).toHaveBeenCalled();
+    expect(screen.queryByText('Failed to load user growth metrics')).not.toBeInTheDocument();
+    expect(screen.queryByText('Feature Adoption (Last 30 Days)')).not.toBeInTheDocument();
+    expect(screen.queryByText('System Health by Service')).not.toBeInTheDocument();
+  });
+
+  test('hides admin-only panels for non-admins with engagement data', async () => {
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('142')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Feature Adoption (Last 30 Days)')).not.toBeInTheDocument();
+    expect(screen.queryByText('System Health by Service')).not.toBeInTheDocument();
+    expect(screen.queryByText('Performance Summary')).not.toBeInTheDocument();
+    expect(screen.queryByText('API Error Rate')).not.toBeInTheDocument();
+    expect(analyticsApi.getFeatureAdoption).not.toHaveBeenCalled();
+    expect(analyticsApi.getSystemHealth).not.toHaveBeenCalled();
+    expect(analyticsApi.getPerformanceMetrics).not.toHaveBeenCalled();
+    expect(billingApi.getSubscription).toHaveBeenCalled();
+  });
+
+  test('shows a no-data-for-team state when a non-admin has no engagement data', async () => {
+    analyticsApi.getPilotEngagement.mockResolvedValue({
+      ...mockEngagement,
+      engagement_trends: [],
+      recently_active_orgs: [],
+    });
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('No data for your team')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('No engagement trend data available.')).not.toBeInTheDocument();
+  });
+
+  test('keeps the error toast for genuine network failures', async () => {
+    localStorage.setItem('auth_state', JSON.stringify(adminAuthState));
+    analyticsApi.getPilotEngagement.mockRejectedValue(new Error('Network error'));
+
+    renderDashboard();
+
+    await waitFor(() => {
+      expect(screen.getByText('Failed to load user growth metrics')).toBeInTheDocument();
+    });
+    expect(screen.queryByText("You don't have access to this data")).not.toBeInTheDocument();
   });
 });

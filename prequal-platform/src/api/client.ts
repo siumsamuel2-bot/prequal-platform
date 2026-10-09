@@ -4,6 +4,16 @@ interface RequestOptions extends RequestInit {
   params?: Record<string, string>;
 }
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 class ApiClient {
   private baseUrl: string;
 
@@ -39,7 +49,7 @@ class ApiClient {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
-      throw new Error(error.detail || `HTTP error ${response.status}`);
+      throw new ApiError(error.detail || `HTTP error ${response.status}`, response.status);
     }
 
     return response.json();

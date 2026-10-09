@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { complianceApi, violationApi, certificationApi, projectApi, complianceAnalyticsApi, ComplianceStatus, Violation, Certification, Project, SubcontractorWithDetails, ComplianceTrendPoint, ComplianceSummaryData, StateCredentialRecord, StateCredentialSummary } from '../api/client';
 import { Loading, EmptyState } from './Loading';
+import { NoAccessState, isForbiddenError } from './NoAccessState';
+import { isAdmin } from '../utils/auth';
 import { useToast } from './ToastContext';
 import { QuickAddSubcontractorModal } from './QuickAddSubcontractorModal';
 import { useAnalytics } from '../hooks/useAnalytics';
@@ -33,6 +35,9 @@ const ComplianceDashboard = () => {
   const [summaryData, setSummaryData] = useState<ComplianceSummaryData | null>(null);
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [stateCredSummary, setStateCredSummary] = useState<StateCredentialSummary | null>(null);
+  const [complianceDenied, setComplianceDenied] = useState(false);
+
+  const isAdminUser = isAdmin();
 
   useEffect(() => {
     const fetchProjects = async () => {
@@ -52,14 +57,23 @@ const ComplianceDashboard = () => {
       try {
         const data = await complianceApi.getStatus(selectedProject || undefined);
         setComplianceData(data);
+        setComplianceDenied(false);
       } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Failed to load compliance data');
+        if (isForbiddenError(err) && !isAdminUser) {
+          // Fail-closed 403 for this account (no resolvable team): show the calm
+          // no-access state instead of an error toast (MID-657).
+          setComplianceData([]);
+          setComplianceDenied(true);
+        } else {
+          setComplianceDenied(false);
+          toast.error(err instanceof Error ? err.message : 'Failed to load compliance data');
+        }
       } finally {
         setLoading(false);
       }
     };
     fetchComplianceData();
-  }, [selectedProject, toast]);
+  }, [selectedProject, toast, isAdminUser]);
 
   useEffect(() => {
     const fetchAnalyticsData = async () => {
@@ -87,7 +101,10 @@ const ComplianceDashboard = () => {
         const summary = await complianceApi.getStateCredentialsSummary();
         setStateCredSummary(summary);
       } catch (err) {
-        console.error('Failed to load state credential summary', err);
+        if (!isForbiddenError(err)) {
+          console.error('Failed to load state credential summary', err);
+        }
+        setStateCredSummary(null);
       }
     };
     fetchStateCredSummary();
@@ -251,6 +268,20 @@ const ComplianceDashboard = () => {
     return <div className="compliance-dashboard"><Loading message="Loading compliance data..." fullScreen /></div>;
   }
 
+  if (complianceDenied && !isAdminUser) {
+    return (
+      <div className="compliance-dashboard">
+        <div className="compliance-header">
+          <div className="header-left">
+            <h1>Compliance Dashboard</h1>
+            <p className="header-subtitle">Violation history and certification status for all subcontractors</p>
+          </div>
+        </div>
+        <NoAccessState variant="no-access" />
+      </div>
+    );
+  }
+
   return (
     <div className="compliance-dashboard">
       <div className="compliance-header">
@@ -309,6 +340,7 @@ const ComplianceDashboard = () => {
           </svg>
           State Level
         </button>
+        {isAdminUser && (
         <button
           className={`tab-btn ${activeTab === 'analytics' ? 'active' : ''}`}
           onClick={() => setActiveTab('analytics')}
@@ -318,6 +350,7 @@ const ComplianceDashboard = () => {
           </svg>
           Analytics
         </button>
+        )}
       </div>
 
       {activeTab === 'table' && (
@@ -369,15 +402,19 @@ const ComplianceDashboard = () => {
       </div>
 
       {filteredData.length === 0 ? (
-        <EmptyState
-          title="No subcontractors match your filters"
-          description="Try adjusting your search or filter criteria."
-          icon={
-            <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          }
-        />
+        complianceData.length === 0 && !searchTerm && statusFilter === 'all' && !isAdminUser ? (
+          <NoAccessState variant="no-data" />
+        ) : (
+          <EmptyState
+            title="No subcontractors match your filters"
+            description="Try adjusting your search or filter criteria."
+            icon={
+              <svg width="48" height="48" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            }
+          />
+        )
       ) : (
         <div className="compliance-table-wrapper">
           <table className="compliance-table">
@@ -558,6 +595,9 @@ const ComplianceDashboard = () => {
           </div>
           <div className="state-table-wrapper">
             {stateLevelData.length === 0 ? (
+              !isAdminUser ? (
+                <NoAccessState variant="no-data" />
+              ) : (
               <EmptyState
                 title="No state data available"
                 description="State information will appear once subcontractors have location data."
@@ -567,6 +607,7 @@ const ComplianceDashboard = () => {
                   </svg>
                 }
               />
+              )
             ) : (
               <table className="state-table">
                 <thead>
@@ -606,7 +647,7 @@ const ComplianceDashboard = () => {
         </div>
       )}
 
-      {activeTab === 'analytics' && (
+      {isAdminUser && activeTab === 'analytics' && (
         <div className="analytics-view">
           <div className="analytics-header">
             <h2>Compliance Analytics</h2>
