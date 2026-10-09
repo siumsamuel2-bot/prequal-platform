@@ -1,4 +1,4 @@
-"""Add production query performance indexes
+﻿"""Add production query performance indexes
 
 Revision ID: 020_production_query_indexes
 Revises: 019_add_subscriptions_table
@@ -25,20 +25,20 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 1. subcontractors: org-scoped active listing
     # ------------------------------------------------------------------
-    op.create_index(
+    _safe_create_index(
         'idx_subcontractors_org_status',
         'subcontractors',
         ['org_id', 'status']
     )
     # subcontractors: license expiration by state
-    op.create_index(
+    _safe_create_index(
         'idx_subcontractors_license_state_exp',
         'subcontractors',
         ['license_state', 'license_expiration']
     )
     # subcontractors: city-state for geo dashboards
     op.drop_index('idx_subcontractors_city_state', table_name='subcontractors')
-    op.create_index(
+    _safe_create_index(
         'idx_subcontractors_state_city',
         'subcontractors',
         ['state', 'city']
@@ -47,7 +47,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 2. projects: org-scoped active project dashboard
     # ------------------------------------------------------------------
-    op.create_index(
+    _safe_create_index(
         'idx_projects_org_status_start',
         'projects',
         ['org_id', 'status', 'start_date']
@@ -56,7 +56,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 3. certifications: expiration dashboard
     # ------------------------------------------------------------------
-    op.create_index(
+    _safe_create_index(
         'idx_certifications_sub_exp_status',
         'certifications',
         ['subcontractor_id', 'expiration_date', 'status']
@@ -65,7 +65,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 4. violations: OSHA compliance checks
     # ------------------------------------------------------------------
-    op.create_index(
+    _safe_create_index(
         'idx_violations_sub_is_osha_status',
         'violations',
         ['subcontractor_id', 'is_osha_violation', 'status']
@@ -74,7 +74,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 5. alert_notifications: pending alert processing queue
     # ------------------------------------------------------------------
-    op.create_index(
+    _safe_create_index(
         'idx_alert_notifications_status_scheduled',
         'alert_notifications',
         ['status', 'scheduled_for']
@@ -83,7 +83,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 6. users: org user management
     # ------------------------------------------------------------------
-    op.create_index(
+    _safe_create_index(
         'idx_users_org_active_role',
         'users',
         ['org_id', 'is_active', 'role']
@@ -92,7 +92,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 7. sync_run_logs: job history filtering
     # ------------------------------------------------------------------
-    op.create_index(
+    _safe_create_index(
         'idx_sync_run_logs_job_started',
         'sync_run_logs',
         ['job_name', 'started_at']
@@ -101,7 +101,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 8. notification_delivery_logs: pending delivery queue
     # ------------------------------------------------------------------
-    op.create_index(
+    _safe_create_index(
         'idx_notification_delivery_status_created',
         'notification_delivery_logs',
         ['status', 'created_at']
@@ -110,7 +110,7 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 9. state_credential_records: subcontractor credential lookup
     # ------------------------------------------------------------------
-    op.create_index(
+    _safe_create_index(
         'idx_state_credential_sub_type',
         'state_credential_records',
         ['subcontractor_id', 'credential_type']
@@ -119,18 +119,35 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 10. project_subcontractors: active assignment lookups
     # ------------------------------------------------------------------
-    op.create_index(
+    _safe_create_index(
         'idx_project_subcontractors_status_proj',
         'project_subcontractors',
         ['status', 'project_id']
     )
-    op.create_index(
+    _safe_create_index(
         'idx_project_subcontractors_status_sub',
         'project_subcontractors',
         ['status', 'subcontractor_id']
     )
 
 
+
+
+def _safe_create_index(name, table_name, columns, **kw):
+    """Create an index only if it (and its table/columns) does not already exist.
+
+    Migration 009 already creates several of the same indexes; this guards
+    against DuplicateTable in PostgreSQL parity mode.
+    """
+    bind = op.get_bind()
+    insp = sa.inspect(bind)
+    if not insp.has_table(table_name):
+        return
+    if name in {ix["name"] for ix in insp.get_indexes(table_name)}:
+        return
+    present = {c["name"] for c in insp.get_columns(table_name)}
+    if all(col in present for col in columns):
+        op.create_index(name, table_name, columns, **kw)
 def downgrade() -> None:
     # Reverse order
     op.drop_index('idx_project_subcontractors_status_sub', table_name='project_subcontractors')
