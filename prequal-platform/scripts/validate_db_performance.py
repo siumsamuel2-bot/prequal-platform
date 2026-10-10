@@ -123,8 +123,6 @@ def test_index_coverage_model():
     from app.models.auth import User, OrganizationMembership
     from app.models.compliance import Certification, Violation, ProjectSubcontractor
 
-    checks_passed = True
-
     # User composite index
     user_args = getattr(User.__table_args__, '__iter__', None) or User.__table_args__
     user_index_names = set()
