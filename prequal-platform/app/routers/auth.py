@@ -25,7 +25,7 @@ from app.schemas.compliance import (
 )
 from app.services.security_service import (
     check_rate_limit, check_account_lockout, create_account_lockout,
-    clear_failed_login_attempts, log_auth_event, MAX_FAILED_ATTEMPTS,
+    clear_failed_login_attempts, log_auth_event,
     LOCKOUT_DURATION_MINUTES
 )
 from app.middleware.rate_limit import limiter, RateLimitTiers, get_tier_limit
