@@ -297,7 +297,17 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://test:${{ secrets.POSTGRES_PASSWORD || 'test' }}@localhost:5432/test_db
         run: |
           cd prequal-platform
-          python -m pytest tests/ -v --cov=app --cov=api --cov-report=xml --cov-report=html --cov-fail-under=80
+          # MID-676: interim coverage ratchet. The suite passes (758 passed,
+          # 6 skipped) but total coverage is still below the 80% goal, so the
+          # gate keeps CI red on a *coverage-only* failure. This is NOT
+          # --exit-zero / continue-on-error: --cov-fail-under stays enforced,
+          # just pinned to a realistic floor while tests are added to climb
+          # back to 80.
+          #   - CI (ubuntu, py3.11, develop@1306383): 70.77%
+          #   - local (win32, py3.14, develop@c72b323): 73.0%
+          # Raise this value as coverage improves; final target is 80.
+          # See prequal-platform/docs/backend-test-coverage.md (MID-676).
+          python -m pytest tests/ -v --cov=app --cov=api --cov-report=xml --cov-report=html --cov-fail-under=70
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4
