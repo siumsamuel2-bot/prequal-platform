@@ -64,7 +64,10 @@ def _days_ago_expr(db: AsyncSession) -> str:
         name = ""
     if name == "sqlite":
         return "date('now', '-' || :days || ' days')"
-    return "(CURRENT_DATE - :days)"
+    # CAST is required: asyncpg otherwise infers :days as ``date``, so
+    # ``date - :days`` resolves to ``date - date`` and the comparison becomes
+    # ``date >= integer``.
+    return "(CURRENT_DATE - CAST(:days AS integer))"
 
 
 # ---------------------------------------------------------------------------

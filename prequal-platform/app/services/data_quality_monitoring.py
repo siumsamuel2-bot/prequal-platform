@@ -139,10 +139,16 @@ def _is_sqlite(db: AsyncSession) -> bool:
 # ---------------------------------------------------------------------------
 
 def _days_ago_date_expr(db: AsyncSession) -> str:
-    """SQL expression for ``now() - :days`` at date precision (both dialects)."""
+    """SQL expression for ``now() - :days`` at date precision (both dialects).
+
+    The explicit ``CAST(:days AS integer)`` is required: asyncpg otherwise
+    infers the bind as ``date`` (because ``date - date`` is a valid overload),
+    which makes ``timestamp >= (date - date)`` collapse to ``timestamp >=
+    integer`` and fail.
+    """
     if _is_sqlite(db):
         return "date('now', '-' || :days || ' days')"
-    return "(CURRENT_DATE - :days)"
+    return "(CURRENT_DATE - CAST(:days AS integer))"
 
 
 def _age_comparison(db: AsyncSession, column: str, interval: str) -> str:
@@ -307,6 +313,8 @@ async def get_sync_health(db: AsyncSession, days: int = 7) -> Dict[str, Any]:
 async def get_match_accuracy(db: AsyncSession) -> Dict[str, Any]:
     """Return match accuracy metrics for violations and state credentials."""
     # Portable query avoiding FILTER and ::NUMERIC casts.
+    # ``is_osha_violation`` is BOOLEAN on PostgreSQL but 0/1 on SQLite.
+    is_osha_true = "1" if _is_sqlite(db) else "TRUE"
     result = await db.execute(
         text(
             f"""
@@ -321,7 +329,7 @@ async def get_match_accuracy(db: AsyncSession) -> Dict[str, Any]:
                     ELSE 0
                 END AS match_rate
             FROM violations
-            WHERE is_osha_violation = 1
+            WHERE is_osha_violation = {is_osha_true}
             UNION ALL
             SELECT
                 'state_credential_records' AS source_table,
