@@ -4,7 +4,6 @@ import '@testing-library/jest-dom';
 import ComplianceDashboard from '../components/ComplianceDashboard';
 import { ToastProvider } from '../components/ToastContext';
 import { ToastContainer } from '../components/ToastContainer';
-import { ToastContainer } from '../components/ToastContainer';
 import {
   complianceApi,
   complianceAnalyticsApi,
