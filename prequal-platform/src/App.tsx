@@ -27,6 +27,8 @@ import DemoRequest from './components/DemoRequest';
 import LeadMagnet from './components/LeadMagnet';
 import BillingSettings from './components/BillingSettings';
 import MFASettings from './components/MFASettings';
+import SupportPage from './components/SupportPage';
+import AdminFeedbackReview from './components/AdminFeedbackReview';
 import { useAnalytics } from './hooks/useAnalytics';
 
 const PAGE_NAME_MAP: Record<string, string> = {
@@ -42,6 +44,8 @@ const PAGE_NAME_MAP: Record<string, string> = {
   '/setup': 'organization_setup',
   '/settings/billing': 'billing_settings',
   '/settings/mfa': 'mfa_settings',
+  '/support': 'support',
+  '/admin/feedback': 'admin_feedback_review',
   '/subcontractors': 'subcontractor_list',
   '/subcontractors/import': 'subcontractor_import',
   '/certifications': 'certifications',
@@ -87,6 +91,8 @@ const AppContent = () => {
                 <Route path="/setup" element={<OrganizationSetup />} />
                 <Route path="/settings/billing" element={<BillingSettings />} />
                 <Route path="/settings/mfa" element={<MFASettings />} />
+                <Route path="/support" element={<SupportPage />} />
+                <Route path="/admin/feedback" element={<AdminFeedbackReview />} />
                 <Route path="/subcontractors" element={<SubcontractorList />} />
                 <Route path="/subcontractors/import" element={<SubcontractorImportWizard />} />
                 <Route path="/subcontractors/:id" element={<SubcontractorProfile />} />

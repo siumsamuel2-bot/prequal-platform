@@ -664,6 +664,50 @@ export const complianceAnalyticsApi = {
     apiClient.get<ComplianceSummaryData>('/compliance/summary'),
 };
 
+export type FeedbackType = 'rating' | 'comment' | 'support';
+
+export type FeedbackStatus = 'new' | 'triaged' | 'declined' | 'duplicate' | 'resolved';
+
+export interface FeedbackSubmission {
+  id: string;
+  org_id: string;
+  user_id: string | null;
+  type: FeedbackType;
+  surface: string;
+  page_url?: string | null;
+  rating?: number | null;
+  message?: string | null;
+  status: FeedbackStatus;
+  owner_user_id?: string | null;
+  linked_issue_id?: string | null;
+  disposition_note?: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface FeedbackListResponse {
+  items: FeedbackSubmission[];
+  total: number;
+}
+
+export const feedbackApi = {
+  submit: (data: { type: FeedbackType; surface: string; page_url?: string; rating?: number; message?: string }) =>
+    apiClient.post<FeedbackSubmission>('/v1/feedback', data),
+
+  list: (params?: { status?: string; type?: string; skip?: number; limit?: number }) => {
+    const query: Record<string, string> = {};
+    if (params?.status) query.status = params.status;
+    if (params?.type) query.type = params.type;
+    if (params?.skip !== undefined) query.skip = String(params.skip);
+    if (params?.limit !== undefined) query.limit = String(params.limit);
+    const hasParams = Object.keys(query).length > 0;
+    return apiClient.get<FeedbackListResponse>('/v1/feedback', hasParams ? { params: query } : undefined);
+  },
+
+  update: (id: string, data: { status?: FeedbackStatus; owner_user_id?: string | null; linked_issue_id?: string | null; disposition_note?: string | null }) =>
+    apiClient.patch<FeedbackSubmission>(`/v1/feedback/${id}`, data),
+};
+
 export type EventType = 'page_view' | 'feature_usage' | 'onboarding_completion' | 'subcontractor_action' | 'cert_upload' | 'feedback_submit' | 'report_export';
 
 export interface AnalyticsEvent {

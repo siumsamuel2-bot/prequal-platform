@@ -3,6 +3,7 @@ import { complianceApi, violationApi, certificationApi, projectApi, complianceAn
 import { Loading, EmptyState } from './Loading';
 import { NoAccessState, isForbiddenError } from './NoAccessState';
 import { isAdmin } from '../utils/auth';
+import FeedbackWidget from './FeedbackWidget';
 import { useToast } from './ToastContext';
 import { QuickAddSubcontractorModal } from './QuickAddSubcontractorModal';
 import { useAnalytics } from '../hooks/useAnalytics';
@@ -318,6 +319,9 @@ const ComplianceDashboard = () => {
             </svg>
             Export PDF
           </button>
+          <a className="export-btn secondary" href="/support">
+            💬 Support
+          </a>
         </div>
       </div>
 
@@ -759,6 +763,7 @@ const ComplianceDashboard = () => {
           onSuccess={handleQuickAddSuccess}
         />
       )}
+      <FeedbackWidget surface="compliance_dashboard" />
     </div>
   );
 };

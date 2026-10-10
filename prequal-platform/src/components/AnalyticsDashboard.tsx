@@ -12,6 +12,7 @@ import {
 import { Loading } from './Loading';
 import { NoAccessState, isForbiddenError } from './NoAccessState';
 import { isAdmin } from '../utils/auth';
+import FeedbackWidget from './FeedbackWidget';
 import { useToast } from './ToastContext';
 import { Link } from 'react-router-dom';
 import {
@@ -560,11 +561,15 @@ const AnalyticsDashboard: React.FC = () => {
                 <Link className="action-btn" to="/compliance-dashboard">
                   🛡️ Compliance Dashboard
                 </Link>
+                <Link className="action-btn" to="/support">
+                  💬 Support & Known Issues
+                </Link>
               </div>
             </div>
           </div>
         </div>
       </div>
+      <FeedbackWidget surface="analytics_dashboard" />
     </div>
   );
 };
