@@ -2,7 +2,7 @@ import os
 import re
 import secrets
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID, uuid4
 
@@ -172,6 +172,21 @@ def _add_security_claims(to_encode: dict, jti: Optional[str] = None) -> dict:
     to_encode["nbf"] = now
     to_encode["jti"] = jti or str(uuid4())
     return to_encode
+
+
+def _as_naive_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Normalise a datetime to naive UTC so comparisons never mix awareness.
+
+    PostgreSQL returns ``DateTime(timezone=True)`` columns as offset-aware UTC
+    datetimes, whereas JWT claims and ``datetime.utcnow()`` are offset-naive.
+    Comparing the two raises ``TypeError: can't compare offset-naive and
+    offset-aware datetimes`` (MID-661); both sides are stripped to naive UTC.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 
 def _client_metadata(request: Optional[Request]) -> tuple[Optional[str], Optional[str]]:
@@ -358,10 +373,12 @@ async def get_current_user(
             raise credentials_exception
         token_data.name = user.name
         token_data.email = user.email
-        if user.password_changed_at:
-            token_ts = datetime.fromisoformat(token_password_changed_at.replace("Z", "+00:00")) if token_password_changed_at else None
-            user_pw_ts = user.password_changed_at.replace(tzinfo=None) if user.password_changed_at.tzinfo else user.password_changed_at
-            if token_ts and token_ts < user_pw_ts:
+        if user.password_changed_at and token_password_changed_at:
+            token_ts = _as_naive_utc(
+                datetime.fromisoformat(token_password_changed_at.replace("Z", "+00:00"))
+            )
+            user_pw_ts = _as_naive_utc(user.password_changed_at)
+            if token_ts and user_pw_ts and token_ts < user_pw_ts:
                 raise password_changed_exception
 
         # Server-side session enforcement: the token JTI must map to an active,
@@ -689,9 +706,11 @@ async def refresh_token(
         if not user or not user.is_active:
             raise credentials_exception
         if token_password_changed_at and user.password_changed_at:
-            token_ts = datetime.fromisoformat(token_password_changed_at.replace("Z", "+00:00"))
-            user_pw_ts = user.password_changed_at.replace(tzinfo=None) if user.password_changed_at.tzinfo else user.password_changed_at
-            if token_ts < user_pw_ts:
+            token_ts = _as_naive_utc(
+                datetime.fromisoformat(token_password_changed_at.replace("Z", "+00:00"))
+            )
+            user_pw_ts = _as_naive_utc(user.password_changed_at)
+            if token_ts and user_pw_ts and token_ts < user_pw_ts:
                 raise password_changed_exception
 
         # MFA enforcement on the refresh path: a refresh token that was not

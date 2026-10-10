@@ -24,7 +24,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.analytics import AnalyticsEvent
-from app.models.auth import Team, TeamMember
+from app.models.auth import Team, TeamMember, User
 from app.models.compliance import Certification, Project, Subcontractor
 from app.routers import analytics as analytics_router
 from app.routers.auth import get_current_user
@@ -47,7 +47,11 @@ def _member(role: str = "member", user_id=USER_A, team_id=TEAM_A) -> TokenData:
 
 
 def _admin() -> TokenData:
-    return TokenData(sub="admin@example.com", user_id=str(uuid.uuid4()), role="admin")
+    return TokenData(
+        sub="admin@example.com",
+        user_id="00000000-0000-0000-0000-000000000001",
+        role="admin",
+    )
 
 
 def _flex_db(team_id):
@@ -265,6 +269,17 @@ async def tenant_data(db_session: AsyncSession):
     """Two teams with a project, a subcontractor (+cert) and events each."""
     team_a, team_b = uuid.uuid4(), uuid.uuid4()
     user_a, user_b = uuid.uuid4(), uuid.uuid4()
+
+    # team_members.user_id references users; real rows are required under
+    # PostgreSQL FK enforcement (previously masked by SQLite, MID-661).
+    db_session.add_all([
+        User(id=user_a, email=f"user-a-{user_a.hex[:8]}@example.com",
+             name="User A", hashed_password="x", role="member", is_active=True),
+        User(id=user_b, email=f"user-b-{user_b.hex[:8]}@example.com",
+             name="User B", hashed_password="x", role="member", is_active=True),
+    ])
+    await db_session.flush()
+
     db_session.add_all([
         Team(id=team_a, name=f"A-{team_a.hex[:6]}", owner_id=user_a),
         Team(id=team_b, name=f"B-{team_b.hex[:6]}", owner_id=user_b),

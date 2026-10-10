@@ -298,8 +298,10 @@ async def test_stale_team_claim_without_membership_denied(
 @pytest.mark.asyncio
 async def test_admin_without_team_is_unscoped(async_client: AsyncClient, records) -> None:
     """Authorized global admins keep platform-wide read access (no regression)."""
+    # Use the seeded sentinel admin identity: the endpoint persists the caller
+    # into audit_logs (FK to users), which requires a backing row on PostgreSQL.
     fastapi_app.dependency_overrides[get_current_user] = lambda: _token(
-        uuid.uuid4(), role="admin"
+        "00000000-0000-0000-0000-000000000001", role="admin"
     )
     try:
         response = await async_client.get("/api/subcontractors")

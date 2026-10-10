@@ -12,7 +12,7 @@ import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.auth import Team, TeamMember
+from app.models.auth import Team, TeamMember, User
 from app.schemas.compliance import TokenData
 from app.routers.auth import get_current_user
 from api.main import app as fastapi_app
@@ -82,6 +82,16 @@ async def test_pilot_engagement_member_with_team_allowed(
     """A non-admin with a live team membership sees their scoped view (200)."""
     team_id = uuid.uuid4()
     user_id = uuid.uuid4()
+    # team_members.user_id references users; seed a real member row so the FK
+    # holds under PostgreSQL (MID-661).
+    db_session.add(User(
+        id=user_id,
+        email=f"member-{user_id.hex[:8]}@example.com",
+        name="Member",
+        hashed_password="x",
+        role="member",
+        is_active=True,
+    ))
     db_session.add(Team(id=team_id, name=f"Team-{team_id.hex[:6]}", owner_id=user_id))
     db_session.add(TeamMember(team_id=team_id, user_id=user_id, role="member"))
     await db_session.commit()

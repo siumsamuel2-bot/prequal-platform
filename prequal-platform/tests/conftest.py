@@ -115,6 +115,49 @@ async def _drop_sqlite_schema() -> None:
         await conn.run_sync(Base.metadata.drop_all)
 
 
+# Fixed identities used by test modules that override ``get_current_user``.
+# Keep these in sync with the user_id literals in the affected tests.
+SENTINEL_ADMIN_ID = "00000000-0000-0000-0000-000000000001"
+SENTINEL_VIEWER_ID = "00000000-0000-0000-0000-000000000002"
+
+_SENTINEL_USERS = (
+    (SENTINEL_ADMIN_ID, "sentinel-admin@example.invalid", "admin"),
+    (SENTINEL_VIEWER_ID, "sentinel-viewer@example.invalid", "viewer"),
+)
+
+
+def _seed_sentinel_users_pg() -> None:
+    """Create the mock identities tests fabricate as the current user.
+
+    Audit/security/tenant code persists the caller's ``user_id`` into tables
+    with foreign keys to ``users`` (``audit_logs``, ``data_access_audit_logs``,
+    ``team_members``). Under SQLite FK enforcement was off so the fabricated
+    identities never needed backing rows; on real PostgreSQL that raised
+    ``ForeignKeyViolation`` (MID-661). Idempotent via ``ON CONFLICT``.
+
+    Uses a synchronous psycopg2 connection (like ``_reset_pg_schema``) rather
+    than the shared async engine, so the engine's asyncpg pool is never touched
+    from an event loop other than the pytest session loop.
+    """
+    import psycopg2
+
+    dsn = _pg_test_url.replace("+asyncpg", "").replace("+psycopg2", "")
+    conn = psycopg2.connect(dsn)
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            for raw_id, email, role in _SENTINEL_USERS:
+                cur.execute(
+                    "INSERT INTO users "
+                    "(id, email, name, hashed_password, role, is_active) "
+                    "VALUES (%s::uuid, %s, %s, %s, %s, true) "
+                    "ON CONFLICT (id) DO NOTHING",
+                    (raw_id, email, "Sentinel User", "x", role),
+                )
+    finally:
+        conn.close()
+
+
 _schema_initialized = False
 
 
@@ -184,6 +227,9 @@ def pytest_configure(config) -> None:
     if _use_postgres:
         _reset_pg_schema()
         _run_alembic_migrations("head")
+        # Back the fixed mock identities with real users rows so FK-constrained
+        # audit/tenant writes succeed on PostgreSQL (MID-661).
+        _seed_sentinel_users_pg()
 
 
 async def _create_data_quality_monitoring_tables_sqlite(conn):

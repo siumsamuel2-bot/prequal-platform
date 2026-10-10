@@ -81,7 +81,9 @@ def test_log_data_access_helper_uses_default_service():
 
 
 async def test_emit_to_db_persists_audit_record(db_session: AsyncSession):
-    user_id = str(uuid.uuid4())
+    # data_access_audit_logs.user_id references users; use the seeded sentinel
+    # identity so the FK holds under PostgreSQL (MID-661).
+    user_id = "00000000-0000-0000-0000-000000000001"
     svc = AuditLoggingService(enable_elk=False, enable_db=True)
     event = svc.log(
         operation_type="POST",
@@ -101,6 +103,7 @@ async def test_emit_to_db_persists_audit_record(db_session: AsyncSession):
         select(DataAccessAuditLog).where(
             DataAccessAuditLog.operation_type == "POST",
             DataAccessAuditLog.resource_type == "subcontractors",
+            DataAccessAuditLog.resource_id == "123",
         )
     )
     record = result.scalars().first()

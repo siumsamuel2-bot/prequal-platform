@@ -2,7 +2,7 @@ import os
 import logging
 import time
 from typing import Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 import uuid
 
@@ -40,6 +40,20 @@ def is_account_locked(email: str) -> Tuple[bool, Optional[datetime]]:
     return False, None
 
 
+def _as_naive_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Strip tzinfo to naive UTC so PG-aware columns compare with utcnow().
+
+    PostgreSQL returns ``DateTime(timezone=True)`` values as offset-aware UTC,
+    while ``datetime.utcnow()`` is offset-naive; mixing them raises
+    ``TypeError`` (MID-661).
+    """
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
 async def record_failed_login(db: AsyncSession, email: str, ip_address: Optional[str] = None) -> None:
     attempt = FailedLoginAttempt(email=email, ip_address=ip_address)
     db.add(attempt)
@@ -50,9 +64,11 @@ async def record_failed_login(db: AsyncSession, email: str, ip_address: Optional
 async def check_account_lockout(db: AsyncSession, email: str) -> Optional[AccountLockout]:
     result = await db.execute(select(AccountLockout).where(AccountLockout.email == email.lower()))
     lockout = result.scalar_one_or_none()
-    if lockout and lockout.locked_until > datetime.utcnow():
+    now = datetime.utcnow()
+    locked_until = _as_naive_utc(lockout.locked_until) if lockout else None
+    if lockout and locked_until > now:
         return lockout
-    if lockout and lockout.locked_until <= datetime.utcnow():
+    if lockout and locked_until <= now:
         await db.delete(lockout)
         await db.commit()
     return None
