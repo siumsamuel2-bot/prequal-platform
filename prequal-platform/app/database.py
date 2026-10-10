@@ -1,7 +1,9 @@
 import os
+import sys
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.pool import NullPool
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
@@ -42,23 +44,36 @@ MAX_OVERFLOW = int(os.getenv("DB_MAX_OVERFLOW", "20"))
 POOL_RECYCLE = int(os.getenv("DB_POOL_RECYCLE", "300"))
 POOL_TIMEOUT = int(os.getenv("DB_POOL_TIMEOUT", "30"))
 
-# SQLite has different pool settings than PostgreSQL
-if ASYNC_DATABASE_URL.startswith("sqlite"):
-    engine = create_async_engine(
-        ASYNC_DATABASE_URL,
-        echo=os.getenv("SQL_DEBUG", "false").lower() == "true",
-        pool_pre_ping=True,
-    )
-else:
-    engine = create_async_engine(
-        ASYNC_DATABASE_URL,
-        echo=os.getenv("SQL_DEBUG", "false").lower() == "true",
-        pool_pre_ping=True,
+# Event-loop safety for async tests (MID-662). asyncpg connections are bound to
+# the event loop that created them; a connection left in a shared pool by one
+# loop raises ``got Future <Future pending> attached to a different loop`` when
+# reused from another. Under pytest the suite legitimately runs across several
+# loops: the pytest-asyncio session loop, schemathesis' ASGI/lifespan loop while
+# it builds the OpenAPI schema during collection, and the throwaway loops behind
+# the sync session fixtures' ``asyncio.run`` calls. A pooled connection therefore
+# cannot be shared between them. ``NullPool`` confines every connect/close to the
+# caller's loop, which removes the cross-loop reuse entirely. Pooling is left
+# unchanged for real application processes (and can be forced off anywhere with
+# ``DB_POOL_DISABLED=1``).
+_RUNNING_UNDER_PYTEST = "pytest" in sys.modules or bool(os.getenv("PYTEST_VERSION"))
+_POOL_DISABLED = os.getenv("DB_POOL_DISABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+_engine_kwargs = {
+    "echo": os.getenv("SQL_DEBUG", "false").lower() == "true",
+    "pool_pre_ping": True,
+}
+if _RUNNING_UNDER_PYTEST or _POOL_DISABLED:
+    _engine_kwargs["poolclass"] = NullPool
+elif not ASYNC_DATABASE_URL.startswith("sqlite"):
+    # Connection-pool tuning is PostgreSQL-only; SQLite keeps SQLAlchemy defaults.
+    _engine_kwargs.update(
         pool_size=POOL_SIZE,
         max_overflow=MAX_OVERFLOW,
         pool_recycle=POOL_RECYCLE,
         pool_timeout=POOL_TIMEOUT,
     )
+
+engine = create_async_engine(ASYNC_DATABASE_URL, **_engine_kwargs)
 
 AsyncSessionLocal = async_sessionmaker(
     engine,
