@@ -8,9 +8,15 @@ paths = [
   '''.git/''',
   '''vendor/''',
   '''third_party/''',
+  # Committed virtualenvs: third-party library source/docstrings, never our code.
+  # (Untracking them from git is tracked as a follow-up; do not allowlist real code paths.)
+  '''(^|/)venv/''',
+  '''(^|/)\.venv/''',
   '''test.*''',
   '''test_.*''',
   '''.*_test\.''',
+  # Deleted status snapshot; contained only placeholder text ("secure-password").
+  '''(^|/)mid18_final_status\.json$''',
 ]
 regexes = [
   '''EXAMPLE_.*''',
@@ -18,19 +24,43 @@ regexes = [
   '''TEST_.*''',
   '''fake-.*''',
   '''placeholder''',
+  # Canonical documentation placeholders (not real credentials):
+  '''AKIAIOSFODNN7EXAMPLE''',
+  '''YourSecurePassword123!''',
+  '''TestPassword123!''',
+  '''change-me-to-secure-password''',
+  '''(?i)replace[_-].*''',
+  # Shell/terraform variable interpolations are references, not literal secrets:
+  '''\$\{[^}]+\}''',
+  # Python f-string interpolations (e.g. postgresql://{self.POSTGRES_USER}:...)
+  '''\{self\.[A-Za-z0-9_.]+\}''',
+  # Documentation placeholder credentials (never real ones):
+  '''(?i)://user:(pass|password)@''',
+  # Credentials pointed at loopback/localhost only (dev defaults, e.g.
+  # postgres://paperclip:paperclip@127.0.0.1). Remote hosts are never allowed.
+  '''(?i)(postgres(?:ql)?(?:\+[a-z0-9]+)?|mysql(?:\+[a-z0-9]+)?|mongodb(?:\+srv)?|redis)://[^:\n]+:[^@\n]+@(127\.0\.0\.1|localhost|\[::1\])''',
+]
+# Historical-only findings: content removed from the code, still in git history.
+commits = [
+  # 4dad3ee: dev-login stub (admin/password equality check) - removed from api/main.py
+  '''4dad3ee02dcb36a5463b9a1ad951b76630f5b5f7''',
 ]
 
 # AWS Keys
 [[rules]]
 id = "aws-access-key"
 description = "AWS Access Key"
-regex = '''(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
+# Whole pattern is captured so the gitleaks "Secret" is the full key
+# (first capture group only = "AKIA" prefix), which allowlist regexes target.
+regex = '''((?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16})'''
 tags = ["aws", "cloud"]
 
 [[rules]]
 id = "aws-secret-key"
 description = "AWS Secret Key"
-regex = '''(?i)aws(.{0,20})?(?-i)['\"][0-9a-zA-Z\/+]{40}['\"]'''
+# [^\n] keeps the match line-scoped; unscoped .{0,20} matched across lines and
+# produced false positives (MID-673).
+regex = '''(?i)aws(?:[^\n]{0,20})?(?-i)['\"][0-9a-zA-Z\/+]{40}['\"]'''
 tags = ["aws", "cloud"]
 
 # Stripe Keys
@@ -64,21 +94,31 @@ tags = ["crypto", "key"]
 [[rules]]
 id = "database-url"
 description = "Database Connection String with Password"
-regex = '''(?i)(postgres|mysql|mongodb|redis)://[^:]+:[^@]+@'''
+# [^:\n] / [^@\n] keep the match on a single line. Unscoped classes also match
+# newlines in RE2, so a benign "redis://host:port" line swallowed following
+# lines up to the next "@" and fired false positives (MID-673).
+# Whole pattern (through the host) captured so allowlist regexes see the full URL.
+# Scheme variants include postgresql://, postgresql+asyncpg://, mongodb+srv://
+# (the original exact-"postgres" match missed standard SQLAlchemy URLs).
+regex = '''(?i)((?:postgres(?:ql)?(?:\+[a-z0-9]+)?|mysql(?:\+[a-z0-9]+)?|mongodb(?:\+srv)?|redis)://[^:\n]+:[^@\n]+@[^@/\s\n]+)'''
 tags = ["database", "credential"]
 
 # JWT Secrets
 [[rules]]
 id = "jwt-secret"
 description = "JWT Secret"
-regex = '''(?i)(jwt[_-]?secret|jwt[_-]?key)['\s:=]+['\"][0-9a-zA-Z]{16,}['\"]'''
+# [ \t] instead of \s (which matches newlines) keeps the match line-scoped (MID-673).
+# Whole pattern captured so allowlist regexes see the full finding.
+regex = '''(?i)((?:jwt[_-]?secret|jwt[_-]?key)[' \t:=]+['\"][0-9a-zA-Z]{16,}['\"])'''
 tags = ["jwt", "auth"]
 
 # Passwords in Config
 [[rules]]
 id = "password-in-config"
 description = "Password in Configuration"
-regex = '''(?i)(password|passwd|pwd)['\s:=]+['\"][^'\"]{8,}['\"]'''
+# [^'\"\n] keeps the value on one line; [ \t] avoids cross-line separators (MID-673).
+# Whole pattern captured so allowlist regexes see the full finding.
+regex = '''(?i)((?:password|passwd|pwd)[' \t:=]+['\"][^'\"\n]{8,}['\"])'''
 tags = ["credential", "password"]
 
 # SendGrid API Key
