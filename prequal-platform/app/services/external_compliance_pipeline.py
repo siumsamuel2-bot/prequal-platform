@@ -953,27 +953,50 @@ async def _log_run(db: AsyncSession, run: PipelineRun, triggered_by: str) -> Non
         },
     )
 
-    # Also record into pipeline_performance for 95th-percentile latency monitoring
+    # Also record into pipeline_performance_logs for 95th-percentile latency
+    # monitoring (MID-660). The previous target table ``pipeline_performance``
+    # was never created by any migration; migration 014 defines
+    # ``pipeline_performance_logs``. Run inside a SAVEPOINT so a failure cannot
+    # abort the surrounding unit of work: on PostgreSQL an errored statement
+    # poisons the whole transaction, which previously swallowed the rest of this
+    # function.
     try:
-        await db.execute(
-            text(
-                "INSERT INTO pipeline_performance (id, pipeline_name, run_start_at, run_end_at, duration_ms, records_processed, records_inserted, records_updated, records_failed, status) VALUES (:id, :pipeline_name, :run_start_at, :run_end_at, :duration_ms, :records_processed, :records_inserted, :records_updated, :records_failed, :status)"
-            ),
-            {
-                "id": str(uuid.uuid4()),
-                "pipeline_name": run.job_name,
-                "run_start_at": run.started_at,
-                "run_end_at": run.completed_at,
-                "duration_ms": int(duration_sec * 1000),
-                "records_processed": total_processed,
-                "records_inserted": run.records_inserted,
-                "records_updated": run.records_updated,
-                "records_failed": run.records_failed,
-                "status": run.status,
-            },
-        )
+        async with db.begin_nested():
+            await db.execute(
+                text(
+                    "INSERT INTO pipeline_performance_logs "
+                    "(id, run_id, job_name, job_type, stage_name, stage_order, "
+                    "started_at, completed_at, duration_ms, records_in, records_out, "
+                    "error_message, metadata) VALUES "
+                    "(:id, :run_id, :job_name, :job_type, :stage_name, :stage_order, "
+                    ":started_at, :completed_at, :duration_ms, :records_in, "
+                    ":records_out, :error_message, :metadata)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "run_id": str(run.id),
+                    "job_name": run.job_name,
+                    "job_type": run.job_type,
+                    "stage_name": "pipeline",
+                    "stage_order": 0,
+                    "started_at": run.started_at,
+                    "completed_at": run.completed_at,
+                    "duration_ms": int(duration_sec * 1000),
+                    "records_in": total_processed,
+                    "records_out": (run.records_inserted or 0) + (run.records_updated or 0),
+                    "error_message": run.error_message,
+                    "metadata": json.dumps(
+                        {
+                            "status": run.status,
+                            "records_inserted": run.records_inserted,
+                            "records_updated": run.records_updated,
+                            "records_failed": run.records_failed,
+                        }
+                    ),
+                },
+            )
     except Exception as exc:
-        logger.warning("Failed to record pipeline_performance: %s", exc)
+        logger.warning("Failed to record pipeline performance: %s", exc)
 
     await asyncio.sleep(COMMIT_BUFFER_SECONDS)
     await db.commit()
@@ -1305,13 +1328,43 @@ async def run_full_pipeline(
 # 8. Analytics Views Refresh
 # ---------------------------------------------------------------------------
 
+async def _refresh_materialized_view(db: AsyncSession, view_name: str) -> None:
+    """Refresh a materialized view with a non-concurrent fallback.
+
+    ``REFRESH MATERIALIZED VIEW CONCURRENTLY`` requires a unique index on the
+    view; without one PostgreSQL raises and aborts the current transaction, so
+    the session must be rolled back before retrying non-concurrently (MID-660).
+    """
+    try:
+        await db.execute(text(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {view_name}"))
+    except Exception:
+        await db.rollback()
+        logger.warning(
+            "Concurrent refresh of %s failed; retrying non-concurrently", view_name
+        )
+        await db.execute(text(f"REFRESH MATERIALIZED VIEW {view_name}"))
+
+
 async def refresh_analytics_views(db: AsyncSession) -> None:
     """Refresh analytics materialized views for dashboard consumption."""
+    # SQLite (default test harness) has no materialized views.
+    try:
+        dialect_name = db.get_bind().dialect.name
+    except Exception:  # noqa: BLE001 - best-effort dialect detection
+        dialect_name = ""
+    if dialect_name == "sqlite":
+        logger.info("SQLite detected; skipping MATERIALIZED VIEW refresh.")
+        return
+
+    views = [
+        "mv_compliance_summary",
+        "mv_violation_trends",
+        "mv_certification_status",
+        "mv_project_compliance",
+    ]
     logger.info("Refreshing analytics materialized views ...")
-    await db.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_compliance_summary"))
-    await db.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_violation_trends"))
-    await db.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_certification_status"))
-    await db.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_project_compliance"))
+    for view in views:
+        await _refresh_materialized_view(db, view)
     await asyncio.sleep(COMMIT_BUFFER_SECONDS)
     await db.commit()
     logger.info("Analytics views refreshed.")

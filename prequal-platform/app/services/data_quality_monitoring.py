@@ -128,6 +128,52 @@ def _is_sqlite(db: AsyncSession) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Dialect-portable SQL fragments (MID-660)
+#
+# The analytics / data-quality queries below are executed against PostgreSQL in
+# production and CI (real Alembic schema) but against SQLite in the default test
+# harness. SQLite's ``julianday`` / ``datetime('now', ...)`` / ``date('now', ...)``
+# and its integer-vs-real division differ from PostgreSQL, which previously made
+# these queries invalid on PostgreSQL. These helpers emit the correct expression
+# for the active dialect.
+# ---------------------------------------------------------------------------
+
+def _days_ago_date_expr(db: AsyncSession) -> str:
+    """SQL expression for ``now() - :days`` at date precision (both dialects)."""
+    if _is_sqlite(db):
+        return "date('now', '-' || :days || ' days')"
+    return "(CURRENT_DATE - :days)"
+
+
+def _age_comparison(db: AsyncSession, column: str, interval: str) -> str:
+    """SQL predicate: ``<column>`` older than ``<interval>`` (e.g. ``25 hours``)."""
+    if _is_sqlite(db):
+        return f"{column} < datetime('now', '-{interval}')"
+    return f"{column} < (NOW() - INTERVAL '{interval}')"
+
+
+def _duration_seconds_expr(db: AsyncSession, start_col: str, end_col: str) -> str:
+    """SQL expression for elapsed seconds between two timestamp columns."""
+    if _is_sqlite(db):
+        return f"(julianday({end_col}) - julianday({start_col})) * 86400"
+    return f"EXTRACT(EPOCH FROM ({end_col} - {start_col}))"
+
+
+def _ratio_round_expr(db: AsyncSession, numerator: str, denominator: str) -> str:
+    """``ROUND(numerator / denominator, 4)`` guarded for real division.
+
+    SQLite needs an explicit ``REAL`` cast to avoid integer division;
+    PostgreSQL's ``round(double precision, integer)`` does not exist, so the
+    stack must be ``NUMERIC`` there.
+    """
+    cast_type = "REAL" if _is_sqlite(db) else "NUMERIC"
+    return (
+        f"ROUND(CAST(({numerator}) AS {cast_type}) "
+        f"/ CAST(({denominator}) AS {cast_type}), 4)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # 1. Health Checks
 # ---------------------------------------------------------------------------
 
@@ -183,7 +229,7 @@ async def get_sync_health(db: AsyncSession, days: int = 7) -> Dict[str, Any]:
     # We aggregate counts and sums, then compute success/failure counts in Python.
     result = await db.execute(
         text(
-            """
+            f"""
             SELECT
                 job_name,
                 job_type,
@@ -193,11 +239,11 @@ async def get_sync_health(db: AsyncSession, days: int = 7) -> Dict[str, Any]:
                 SUM(records_updated) AS total_records_updated,
                 SUM(records_failed) AS total_records_failed,
                 AVG(
-                    (julianday(completed_at) - julianday(started_at)) * 86400
+                    {_duration_seconds_expr(db, "started_at", "completed_at")}
                 ) AS avg_duration_seconds,
                 MAX(started_at) AS last_run_at
             FROM sync_run_logs
-            WHERE started_at >= date('now', '-' || :days || ' days')
+            WHERE started_at >= {_days_ago_date_expr(db)}
             GROUP BY job_name, job_type
             """
         ),
@@ -223,7 +269,7 @@ async def get_sync_health(db: AsyncSession, days: int = 7) -> Dict[str, Any]:
                     status,
                     COUNT(*) AS cnt
                 FROM sync_run_logs
-                WHERE started_at >= date('now', '-' || :days || ' days')
+                WHERE started_at >= {_days_ago_date_expr(db)}
                 AND (job_name, job_type) IN ({placeholders})
                 GROUP BY job_name, job_type, status
                 """
@@ -263,7 +309,7 @@ async def get_match_accuracy(db: AsyncSession) -> Dict[str, Any]:
     # Portable query avoiding FILTER and ::NUMERIC casts.
     result = await db.execute(
         text(
-            """
+            f"""
             SELECT
                 'violations' AS source_table,
                 COUNT(*) AS total_count,
@@ -271,7 +317,7 @@ async def get_match_accuracy(db: AsyncSession) -> Dict[str, Any]:
                 SUM(CASE WHEN subcontractor_id IS NULL THEN 1 ELSE 0 END) AS unmatched_count,
                 CASE
                     WHEN COUNT(*) > 0 THEN
-                        ROUND(CAST(SUM(CASE WHEN subcontractor_id IS NOT NULL THEN 1 ELSE 0 END) AS REAL) / COUNT(*), 4)
+                        {_ratio_round_expr(db, "SUM(CASE WHEN subcontractor_id IS NOT NULL THEN 1 ELSE 0 END)", "COUNT(*)")}
                     ELSE 0
                 END AS match_rate
             FROM violations
@@ -284,7 +330,7 @@ async def get_match_accuracy(db: AsyncSession) -> Dict[str, Any]:
                 SUM(CASE WHEN holder_name IS NULL THEN 1 ELSE 0 END) AS unmatched_count,
                 CASE
                     WHEN COUNT(*) > 0 THEN
-                        ROUND(CAST(SUM(CASE WHEN holder_name IS NOT NULL THEN 1 ELSE 0 END) AS REAL) / COUNT(*), 4)
+                        {_ratio_round_expr(db, "SUM(CASE WHEN holder_name IS NOT NULL THEN 1 ELSE 0 END)", "COUNT(*)")}
                     ELSE 0
                 END AS match_rate
             FROM state_credential_records
@@ -311,18 +357,18 @@ async def get_error_rates(db: AsyncSession, days: int = 7) -> Dict[str, Any]:
     # Portable query avoiding ::NUMERIC casts.
     result = await db.execute(
         text(
-            """
+            f"""
             SELECT
                 job_name,
                 SUM(records_processed) AS total_processed,
                 SUM(records_failed) AS total_failed,
                 CASE
                     WHEN SUM(records_processed) > 0 THEN
-                        ROUND(CAST(SUM(records_failed) AS REAL) / CAST(SUM(records_processed) AS REAL), 4)
+                        {_ratio_round_expr(db, "SUM(records_failed)", "SUM(records_processed)")}
                     ELSE 0
                 END AS error_rate
             FROM sync_run_logs
-            WHERE started_at >= date('now', '-' || :days || ' days')
+            WHERE started_at >= {_days_ago_date_expr(db)}
             GROUP BY job_name
             """
         ),
@@ -348,10 +394,10 @@ async def check_stale_data(db: AsyncSession) -> Dict[str, Any]:
     # OSHA data freshness
     result = await db.execute(
         text(
-            """
+            f"""
             SELECT data_type, last_updated, next_scheduled_update, status
             FROM osha_data_freshness
-            WHERE last_updated < datetime('now', '-25 hours')
+            WHERE {_age_comparison(db, "last_updated", "25 hours")}
             OR status != 'current'
             """
         )
@@ -361,10 +407,10 @@ async def check_stale_data(db: AsyncSession) -> Dict[str, Any]:
     # State credential records not synced in 7 days
     result = await db.execute(
         text(
-            """
+            f"""
             SELECT state_code, COUNT(*) AS stale_count
             FROM state_credential_records
-            WHERE last_synced_at < datetime('now', '-7 days')
+            WHERE {_age_comparison(db, "last_synced_at", "7 days")}
             GROUP BY state_code
             """
         )
@@ -1098,7 +1144,7 @@ async def archive_old_sync_logs(db: AsyncSession, retention_days: int = 90) -> D
     """
     result = await db.execute(
         text(
-            """
+            f"""
             INSERT INTO archived_sync_run_logs
             (id, job_name, job_type, status, triggered_by, started_at, completed_at,
              records_processed, records_inserted, records_updated, records_failed,
@@ -1108,7 +1154,7 @@ async def archive_old_sync_logs(db: AsyncSession, retention_days: int = 90) -> D
                 records_processed, records_inserted, records_updated, records_failed,
                 error_message, run_metadata, CURRENT_TIMESTAMP, 'retention'
             FROM sync_run_logs
-            WHERE started_at < date('now', '-' || :days || ' days')
+            WHERE started_at < {_days_ago_date_expr(db)}
             AND NOT EXISTS (
                 SELECT 1 FROM archived_sync_run_logs a WHERE a.id = sync_run_logs.id
             )
@@ -1133,7 +1179,7 @@ async def archive_old_data_quality_results(db: AsyncSession, retention_days: int
     """
     result = await db.execute(
         text(
-            """
+            f"""
             INSERT INTO archived_data_quality_results
             (id, check_id, sync_run_id, status, records_checked, records_failed,
              failure_rate, execution_time_ms, sample_failures, executed_at,
@@ -1143,7 +1189,7 @@ async def archive_old_data_quality_results(db: AsyncSession, retention_days: int
                 failure_rate, execution_time_ms, sample_failures, executed_at,
                 CURRENT_TIMESTAMP, 'retention'
             FROM data_quality_results
-            WHERE executed_at < date('now', '-' || :days || ' days')
+            WHERE executed_at < {_days_ago_date_expr(db)}
             AND NOT EXISTS (
                 SELECT 1 FROM archived_data_quality_results a WHERE a.id = data_quality_results.id
             )
@@ -1258,6 +1304,10 @@ async def refresh_data_quality_views(db: AsyncSession) -> None:
             await db.execute(text(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {view}"))
             logger.info("Refreshed materialized view: %s", view)
         except Exception:
+            # PostgreSQL aborts the whole transaction on the failed
+            # CONCURRENTLY refresh (usually "no unique index"), so the session
+            # must be rolled back before the non-concurrent retry (MID-660).
+            await db.rollback()
             logger.warning("Failed to refresh %s concurrently, trying non-concurrent", view)
             await db.execute(text(f"REFRESH MATERIALIZED VIEW {view}"))
             logger.info("Refreshed materialized view: %s", view)

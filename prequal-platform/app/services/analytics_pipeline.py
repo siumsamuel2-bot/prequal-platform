@@ -50,6 +50,23 @@ def _to_iso(value: Any) -> Optional[str]:
     return str(value)
 
 
+def _days_ago_expr(db: AsyncSession) -> str:
+    """SQL expression for ``<date> >= now() - :days`` on any dialect (MID-660).
+
+    ``:days`` is supplied by the caller via bind params. SQLite uses
+    ``date('now', ...)``; PostgreSQL uses a ``CURRENT_DATE`` interval
+    expression (``date('now', ...)`` is not a PostgreSQL function).
+    """
+    name = ""
+    try:
+        name = db.get_bind().dialect.name
+    except Exception:  # noqa: BLE001 - best-effort dialect detection
+        name = ""
+    if name == "sqlite":
+        return "date('now', '-' || :days || ' days')"
+    return "(CURRENT_DATE - :days)"
+
+
 # ---------------------------------------------------------------------------
 # Refresh helpers for materialized views
 # ---------------------------------------------------------------------------
@@ -493,8 +510,8 @@ async def get_feature_adoption_summary(
 ) -> list[dict[str, Any]]:
     """Return daily feature adoption aggregates from mv_feature_adoption_summary."""
     params: dict[str, Any] = {"limit": limit, "offset": offset, "days": days}
-    # Use SQLite-compatible date function instead of PostgreSQL INTERVAL syntax
-    days_ago = f"date('now', '-{days} days')"
+    # Dialect-portable "now - :days" (SQLite date() vs PostgreSQL interval).
+    days_ago = _days_ago_expr(db)
     filters = [f"event_date >= {days_ago}"]
 
     if feature_name:
@@ -546,7 +563,7 @@ async def get_feature_adoption_summary_count(
     days: int = 90,
 ) -> int:
     """Return total count of feature adoption rows for pagination."""
-    days_ago = f"date('now', '-{days} days')"
+    days_ago = _days_ago_expr(db)
     params: dict[str, Any] = {"days": days}
     filters = [f"event_date >= {days_ago}"]
 
