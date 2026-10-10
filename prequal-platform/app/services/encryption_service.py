@@ -20,24 +20,13 @@ def _get_fernet_key() -> bytes:
     if not key_material:
         logger.warning("No ENCRYPTION_KEY or SECRET_KEY set. Using temporary key for development.")
         return Fernet.generate_key()
-    raw = key_material.encode()
-    if len(raw) == 32 and _is_valid_fernet_key(key_material):
-        return raw
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
         salt=b"prequal_salt",
         iterations=480000,
     )
-    return base64.urlsafe_b64encode(kdf.derive(raw))
-
-
-def _is_valid_fernet_key(key_material: str) -> bool:
-    try:
-        Fernet(key_material)
-        return True
-    except Exception:
-        return False
+    return base64.urlsafe_b64encode(kdf.derive(key_material.encode()))
 
 
 def _get_fernet() -> Fernet:

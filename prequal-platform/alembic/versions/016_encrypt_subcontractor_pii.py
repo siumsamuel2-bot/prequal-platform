@@ -50,16 +50,13 @@ def _get_fernet():
         logger.warning("No ENCRYPTION_KEY or SECRET_KEY set. Using temporary key.")
         return Fernet(Fernet.generate_key())
 
-    if len(key_material) < 32:
-        kdf = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=b"prequal_salt",
-            iterations=480000,
-        )
-        return Fernet(base64.urlsafe_b64encode(kdf.derive(key_material.encode())))
-
-    return Fernet(key_material.encode()[:32])
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=b"prequal_salt",
+        iterations=480000,
+    )
+    return Fernet(base64.urlsafe_b64encode(kdf.derive(key_material.encode())))
 
 
 def _encrypt_value(fernet, plaintext):
