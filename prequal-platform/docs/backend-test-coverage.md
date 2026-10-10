@@ -41,3 +41,29 @@ Local coverage is consistently ~2pp higher than CI. Contributing factors:
 
 To isolate the cause definitively, run the same commit on both environments
 with a pinned dependency set. This is tracked as follow-up work under MID-676.
+
+## Progress
+
+### Added: `app/scheduled.py` + `app/services/pdf_service.py`
+
+New DB-agnostic test modules raise per-module coverage (measured with
+`pytest --cov=<module>` on Python 3.14, `develop@1c99e82`; both pass under
+SQLite and PostgreSQL parity because nothing touches a real DB):
+
+| Module | Before | After | Tests |
+| --- | --- | --- | --- |
+| `app/scheduled.py` | 0% | 89% | `tests/test_scheduled_jobs.py` — job registration + success/failure paths for every runner (session factory, pipeline entry points and state-scraper factory monkeypatched). Only the `__main__` process block (lines 216-225) is uncovered. |
+| `app/services/pdf_service.py` | 17% | 100% | `tests/test_pdf_service.py` — compliance-score arithmetic, PII decrypt fallback, and full render paths via a fake WeasyPrint module + fake async DB. |
+
+The `--cov-fail-under` floor stays at `70` for now. These additions only
+increase coverage, so the gate remains green; the floor will be bumped once a
+CI run on `develop` reports the new global total (avoids a premature raise that
+could red the job).
+
+### Remaining largest gaps (final target `--cov-fail-under=80`)
+
+- `routers/compliance.py` (~729 stmts, 43%) — largest absolute gap
+- `services/external_compliance_pipeline.py` (~492, 66%)
+- `routers/billing.py` (~168, 27%) + `services/billing_service.py` (~98, 22%)
+- `services/alert_service.py` (~138, 41%), `services/alert_service` delivery paths
+- Unimported models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py`
