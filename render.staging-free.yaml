@@ -7,13 +7,19 @@
 # prequal-platform/vercel.json). Redis is omitted: rate limiting falls back to
 # in-memory storage, acceptable for staging/pilot validation.
 #
-# Apply via Render dashboard: New + -> Blueprint -> connect repo -> the default
-# render.yaml is production-oriented; use "Apply from file" with this file, or
-# temporarily rename it to render.yaml.
+# Apply via Render dashboard: New + -> Blueprint -> connect repo -> accept
+# the default render.yaml path (the repo-root render.yaml IS this staging-free
+# blueprint). This copy is kept for "Apply from file".
 
 services:
   - type: web
     name: prequal-staging-api
+    # Deploy branch: MUST track `develop` (same branch the CI `deploy-staging`
+    # job targets). Render defaults to the repo default branch (master/main)
+    # when `branch` is omitted - that default was ~5 months stale and caused
+    # the migration-016 deploy failures (MID-675). master/main are NOT the
+    # deploy branch.
+    branch: develop
     env: python
     plan: free
     rootDir: prequal-platform

@@ -21,6 +21,12 @@
 services:
   - type: web
     name: prequal-staging-api
+    # Deploy branch: MUST track `develop` (same branch the CI `deploy-staging`
+    # job targets). Render defaults to the repo default branch (master/main)
+    # when `branch` is omitted - that default was ~5 months stale and caused
+    # the migration-016 deploy failures (MID-675). master/main are NOT the
+    # deploy branch.
+    branch: develop
     env: python
     plan: free
     rootDir: prequal-platform
