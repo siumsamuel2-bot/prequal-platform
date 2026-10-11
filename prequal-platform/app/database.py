@@ -11,6 +11,37 @@ DATABASE_URL = os.getenv(
 )
 
 
+# Libpq-only query params that psycopg2 accepts but ``asyncpg`` rejects.
+# SQLAlchemy's asyncpg dialect forwards unrecognised URL query params straight
+# to ``asyncpg.connect()``, so a managed-Postgres URL carrying
+# ``&channel_binding=require`` (Neon does) crashes app startup with
+# ``TypeError: connect() got an unexpected keyword argument 'channel_binding'``
+# (MID-684). Drop them for the async driver.
+_ASYNCPG_UNSUPPORTED_QUERY_PARAMS = frozenset({"channel_binding"})
+
+
+def _strip_query_params(url: str, params: frozenset) -> str:
+    """Drop ``params`` from a URL's query string, preserving order + fragment.
+
+    Handles the parameter whether it is the first (``?channel_binding=...``) or
+    a later (``&channel_binding=...``) query pair, and keeps the remaining query
+    string and any ``#fragment`` intact.
+    """
+    fragment = ""
+    if "#" in url:
+        url, fragment = url.split("#", 1)
+        fragment = "#" + fragment
+    if "?" not in url:
+        return url + fragment
+    base, query = url.split("?", 1)
+    kept = [
+        pair
+        for pair in query.split("&")
+        if pair and pair.split("=", 1)[0].lower() not in params
+    ]
+    return base + ("?" + "&".join(kept) if kept else "") + fragment
+
+
 def _normalize_async_url(url: str) -> str:
     """Force a Postgres URL onto the async ``asyncpg`` driver (installed).
 
@@ -21,6 +52,9 @@ def _normalize_async_url(url: str) -> str:
     imports this module). ``asyncpg`` is already installed and expects the
     ``ssl`` query parameter (e.g. Neon's ``?ssl=require``), so map any
     ``sslmode=`` form to ``ssl=`` for this engine.
+
+    MID-684: also strip libpq-only query params (``channel_binding``) that
+    asyncpg rejects; otherwise a managed-Postgres URL crashes ``connect()``.
     """
     if url.startswith("sqlite"):
         return url
@@ -33,6 +67,7 @@ def _normalize_async_url(url: str) -> str:
         if url.startswith(prefix):
             url = "postgresql+asyncpg://" + url[len(prefix):]
             break
+    url = _strip_query_params(url, _ASYNCPG_UNSUPPORTED_QUERY_PARAMS)
     return url.replace("sslmode=require", "ssl=require")
 
 
