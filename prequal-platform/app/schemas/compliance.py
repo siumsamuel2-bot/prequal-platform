@@ -43,6 +43,14 @@ class ProjectStatus(str, Enum):
 
 class AlertType(str, Enum):
     EXPIRATION_APPROACHING = "expiration_approaching"
+    # Per-window expiration alert types emitted by
+    # app/services/alert_service.py::_create_expiration_alert()
+    # (``f"expiration_{days_until}d"``). They must be valid response values or
+    # GET /api/alerts / by-contractor / by-project / acknowledge raise a
+    # ResponseValidationError (500) for every scan-generated alert.
+    EXPIRATION_30D = "expiration_30d"
+    EXPIRATION_14D = "expiration_14d"
+    EXPIRATION_7D = "expiration_7d"
     EXPIRED = "expired"
     VIOLATION_ISSUED = "violation_issued"
     RENEWAL_APPROVED = "renewal_approved"
