@@ -37,7 +37,8 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: ALLOWED_ORIGINS
-        value: http://localhost:5173
+        # Keep identical to the root render.yaml (MID-680).
+        value: https://prequal-staging.vercel.app,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000
       - key: RATE_LIMIT_PER_MINUTE
         value: "60"
     healthCheckPath: /health

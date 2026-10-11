@@ -1,4 +1,4 @@
-﻿# Render Blueprint for Prequal (MID-625) - FREE-tier staging
+# Render Blueprint for Prequal (MID-625) - FREE-tier staging
 #
 # This IS the staging-free blueprint: Render's default repo-root discovery
 # (render.yaml) applies exactly this file, so the board can accept the
@@ -44,7 +44,11 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: ALLOWED_ORIGINS
-        value: http://localhost:5173
+        # Browser-facing ORIGINS (scheme + host) allowed to call the API with
+        # credentials - not API base URLs. Includes the Vercel staging frontend
+        # (MID-680) plus local Vite dev servers. Kept identical to
+        # render.staging-free.yaml.
+        value: https://prequal-staging.vercel.app,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000
       - key: RATE_LIMIT_PER_MINUTE
         value: "60"
     healthCheckPath: /health
