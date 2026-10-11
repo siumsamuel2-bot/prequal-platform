@@ -26,9 +26,9 @@ on:
   workflow_dispatch:
     inputs:
       render_branch:
-        description: 'Branch Render deploys the backend from'
+        description: 'Branch Render deploys the backend from (default: develop)'
         required: false
-        default: 'task/mid-18'
+        default: 'develop'
       neon_project:
         description: 'Neon project name'
         required: false
@@ -144,7 +144,7 @@ jobs:
         id: service
         env:
           RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          RENDER_BRANCH: ${{ github.event.inputs.render_branch || 'task/mid-18' }}
+          RENDER_BRANCH: ${{ github.event.inputs.render_branch || 'develop' }}
           DATABASE_URL: ${{ steps.dburl.outputs.db_url }}
           GITHUB_REPO: siumsamuel2-bot/prequal-platform
         run: |
@@ -273,7 +273,7 @@ jobs:
           RENDER_URL: ${{ needs.render.outputs.service_url }}
           GITHUB_ORG: siumsamuel2-bot
           GITHUB_REPO: prequal-platform
-          RENDER_BRANCH: ${{ github.event.inputs.render_branch || 'task/mid-18' }}
+          RENDER_BRANCH: ${{ github.event.inputs.render_branch || 'develop' }}
         run: |
           set -euo pipefail
           auth="Authorization: Bearer $VERCEL_TOKEN"
@@ -302,7 +302,7 @@ jobs:
           VERCEL_PROJECT: ${{ github.event.inputs.vercel_project || 'prequal-platform' }}
           GITHUB_ORG: siumsamuel2-bot
           GITHUB_REPO: prequal-platform
-          RENDER_BRANCH: ${{ github.event.inputs.render_branch || 'task/mid-18' }}
+          RENDER_BRANCH: ${{ github.event.inputs.render_branch || 'develop' }}
         run: |
           set -euo pipefail
           auth="Authorization: Bearer $VERCEL_TOKEN"
