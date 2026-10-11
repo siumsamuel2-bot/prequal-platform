@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.database import init_db, close_db, engine
-from app.routers import auth, compliance, alerts, credentials, analytics, webhooks, billing, state_compliance, audit, source_db, rate_limits
+from app.routers import auth, compliance, alerts, credentials, analytics, webhooks, billing, state_compliance, audit, source_db, rate_limits, feedback
 from app.logging_config import setup_logging, get_logger
 from app.middleware.rate_limit import setup_rate_limiting
 from app.middleware.correlation_id import setup_correlation_id
@@ -110,6 +110,7 @@ app.include_router(state_compliance.router)
 app.include_router(audit.router)
 app.include_router(source_db.router)
 app.include_router(rate_limits.router)
+app.include_router(feedback.router)
 
 # Import and include health router (must be after app creation)
 from api import health

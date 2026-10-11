@@ -10,6 +10,7 @@ from app.models.compliance import (
 )
 from app.models.delivery_pipeline import DeliveryPipelineState
 from app.models.alerts import AlertConfig, AlertLog
+from app.models.feedback import FeedbackSubmission
 
 __all__ = [
     # Auth & Orgs
@@ -27,4 +28,6 @@ __all__ = [
     "DeliveryPipelineState",
     # Alerts (Sprint 2)
     "AlertConfig", "AlertLog",
+    # Feedback / customer-care (MID-666)
+    "FeedbackSubmission",
 ]
