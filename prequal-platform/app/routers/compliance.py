@@ -1181,11 +1181,6 @@ async def get_projects(
     query = query.offset(skip).limit(limit).order_by(Project.created_at.desc())
     result = await db.execute(query)
     projects = result.scalars().all()
-    for proj in projects:
-        for field in CLIENT_FIELDS:
-            val = decrypt_client(proj, field)
-            if val:
-                setattr(proj, field, val)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -1198,6 +1193,15 @@ async def get_projects(
             ip_address=client_ip,
             details=f"Listed {len(projects)} projects"
         )
+
+    # Decrypt only after the audit commit: pending attribute writes must not be
+    # flushed by a later commit (which would persist plaintext client fields and
+    # expire server-managed columns like updated_at).
+    for proj in projects:
+        for field in CLIENT_FIELDS:
+            val = decrypt_client(proj, field)
+            if val:
+                setattr(proj, field, val)
 
     return projects
 
@@ -1259,10 +1263,6 @@ async def create_project(
     db.add(db_project)
     await db.commit()
     await db.refresh(db_project)
-    for field in CLIENT_FIELDS:
-        val = decrypt_client(db_project, field)
-        if val:
-            setattr(db_project, field, val)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -1275,6 +1275,13 @@ async def create_project(
             ip_address=client_ip,
             details=f"Created project: {project.project_name}"
         )
+
+    # Decrypt after the audit commit (see get_projects) so the write below is
+    # never flushed as plaintext and updated_at is not left expired.
+    for field in CLIENT_FIELDS:
+        val = decrypt_client(db_project, field)
+        if val:
+            setattr(db_project, field, val)
 
     return db_project
 
@@ -1314,10 +1321,6 @@ async def update_project(
 
     await db.commit()
     await db.refresh(db_project)
-    for field in CLIENT_FIELDS:
-        val = decrypt_client(db_project, field)
-        if val:
-            setattr(db_project, field, val)
 
     if request:
         client_ip = request.client.host if request.client else None
@@ -1330,6 +1333,12 @@ async def update_project(
             ip_address=client_ip,
             details=f"Updated project fields: {changed_fields}"
         )
+
+    # Decrypt after the audit commit (see get_projects).
+    for field in CLIENT_FIELDS:
+        val = decrypt_client(db_project, field)
+        if val:
+            setattr(db_project, field, val)
 
     return db_project
 
@@ -1703,7 +1712,7 @@ async def get_dashboard_summary(
     total_projects_result = await db.execute(select(func.count(Project.id)).where(and_(*projects_filter)) if projects_filter else select(func.count(Project.id)))
     total_projects = total_projects_result.scalar() or 0
     
-    active_projects_filter = [Project.status == (Project.Status.ACTIVE.value if hasattr(Project.Status, 'ACTIVE') else "active")] + (projects_filter if team_id else [])
+    active_projects_filter = [Project.status == "active"] + (projects_filter if team_id else [])
     active_projects_result = await db.execute(
         select(func.count(Project.id)).where(and_(*active_projects_filter))
     )

@@ -29,7 +29,8 @@ Ratchet history (floor only ever moves **upward**):
 | Commit | Floor | Rationale |
 | --- | --- | --- |
 | `1c99e82` | `80` -> `70` | Unblock the coverage-only red `test` job (CI 70.77%). |
-| MID-676 billing tests | `70` -> `71` | New billing tests add ~114 covered lines (~+1.3pp). On top of a tree already green at `70`, CI is therefore >= ~71.3%, so `71` is the largest floor guaranteed below the lower bound. |
+| `b2da8c3` | `70` -> `71` | Billing tests add ~114 covered lines (~+1.3pp); CI measured 73.34% at that commit, so `71` was below the lower bound. |
+| MID-676 compliance tests | `71` -> `75` | Compliance-router tests add ~470 covered lines (~+5pp). Off the measured CI baseline (73.34%) that lands ~78%, so `75` is set with ~3pp of margin -- the ratchet only moves upward, so it is kept conservatively below the estimate. |
 
 ## Local vs CI discrepancy (~2.2pp, open)
 
@@ -106,10 +107,41 @@ which is why they sit at 0%. Covering them is not appropriate; deleting the
 duplicate model files (a coverage win with no test code) is a separate
 backend cleanup decision, tracked as follow-up under MID-676.
 
+### Added: `app/routers/compliance.py`
+
+`tests/test_compliance_router_crud.py` drives the top-level `/api/projects`,
+`/api/certifications` and `/api/violations` routers, the nested project /
+contractor views, quick-add, and the read-only compliance status / dashboard /
+cache/health endpoints through the real FastAPI app (admin-scoped caller, so
+tenant scoping is intentionally unscoped).
+
+| Module | Before | After | Tests |
+| --- | --- | --- | --- |
+| `app/routers/compliance.py` | 43% | 85% | `tests/test_compliance_router_crud.py` |
+
+Global local total after these additions: **80%** (871 passed, 5 skipped;
+Python 3.14, `task/mid-676`). Floor raised `71 -> 75` (see above).
+
+#### Bugs found and fixed
+
+1. **`GET /api/dashboard/summary` crashed** with `AttributeError: type object
+   'Project' has no attribute 'Status'` -- it evaluated `Project.Status.ACTIVE`
+   inside a `hasattr` guard, but the attribute access itself raises. Fixed to
+   `Project.status == "active"`.
+2. **Project client-field endpoints returned 500 and leaked plaintext.** The
+   project list/create/update handlers decrypted client fields into the ORM
+   instance *before* the audit-logging commit. That commit then flushed the
+   plaintext `client_name`/`client_contact` back into the database and expired
+   the server-managed `updated_at`, after which response serialization raised
+   `MissingGreenlet` (500). This is exactly the anti-pattern the
+   `_subcontractor_response_data` docstring warns about. Fixed by moving the
+   decrypt step to *after* the audit commit in `get_projects`, `create_project`
+   and `update_project` (no pending writes are left across a commit).
+
 ### Remaining largest gaps (final target `--cov-fail-under=80`)
 
-- `routers/compliance.py` (~729 stmts, 43%) — largest absolute gap
-- `services/external_compliance_pipeline.py` (~492, 66%)
-- `services/alert_service.py` (~138, 41%), alert delivery paths
+- `services/external_compliance_pipeline.py` (~506 stmts, 65%)
+- `routers/alerts.py` (47%), `services/alert_service.py` (41%), alert delivery paths
 - Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py` (see above)
-- `middleware/rate_limit.py` (77%), `routers/alerts.py` (47%)
+- `middleware/rate_limit.py` (77%), `services/data_quality_monitoring.py` (~85%), `services/source_db_connector.py` (~83%)
+- `routers/auth.py` (~85%), `routers/analytics.py` (~79%), `services/analytics_pipeline.py` (63%)
