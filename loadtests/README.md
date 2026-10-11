@@ -4,60 +4,79 @@ Baseline load testing against the staging environment for the Analytics
 Dashboard ([MID-592](/MID/issues/MID-592)) and Analytics Service
 ([MID-588](/MID/issues/MID-588)).
 
-## Environment
+## Environment (Render free tier - no AWS)
 
-Provisioned by `terraform/staging.tf`:
+Board decision (MID-71, 2026-10-06): no cloud budget; staging runs on 100%
+free tiers. Full provider/env/limit docs live in
+`prequal-platform/docs/staging-free-tier.md`.
 
-- ECS cluster: `prequal-cluster-staging`
-- Platform service: `prequal-service-staging` (task family `prequal-task-staging`)
-- Analytics service: `analytics-service-staging` (task family `analytics-service-task-staging`)
-- Dedicated staging ALB (`prequal-alb-staging`) — load tests never touch production traffic
-- CodeDeploy blue/green group: `staging-deployment-group` (see `terraform/codedeploy.tf`)
+| Layer     | Provider | Plan | Target                                        |
+| --------- | -------- | ---- | --------------------------------------------- |
+| API       | Render   | free | `https://prequal-staging-api.onrender.com`    |
+| Postgres  | Neon     | free | `DATABASE_URL` secret on the Render service   |
+| Frontend  | Vercel   | free | Vercel project (board-managed)                |
 
-Deploy path: the `deploy-staging` jobs in `.github/workflows/ci-cd.yml` and
-`.github/workflows/analytics-service.yml` deploy on merge to `develop`.
+Superseded: `terraform/staging.tf` (AWS ECS/ALB/CodeDeploy) is not used for
+free-tier staging hosting. `k6-analytics.js` remains as a profile reference
+for the analytics-service surface (`/analytics/health`,
+`/api/v1/analytics/...`); those paths do not exist on the Render monolith,
+use the stdlib harness below against staging.
 
-## One-time setup before first load test
+## Rate limits the harness must respect
 
-1. Apply terraform staging module (CI `validate-infrastructure` + apply, or
-   `terraform apply` from a workstation with AWS creds).
-2. Populate the staging SSM parameters (placeholder values by design):
-   - `/prequal/staging/database-url`
-   - `/prequal/staging/analytics/database-url`
-3. Validate the staging ACM cert (`staging.prequal.yourcompany.com`) via DNS.
-4. Verify staging health: `curl -f https://staging.prequal.yourcompany.com/api/health`
-   and `curl -f https://staging.prequal.yourcompany.com/analytics/health`.
+From `prequal-platform/app/middleware/rate_limit.py`:
+
+| Scope                          | Limit              |
+| ------------------------------ | ------------------ |
+| Register (per IP)              | 20/min             |
+| Login (per IP)                 | 10/min             |
+| Unauthenticated (per IP)       | 20/min (reads 30)  |
+| Authenticated reads (per user) | 200/min            |
+| DDoS sustained (per IP)        | 1000/min           |
+| `/health` (root)               | exempt             |
+
+Note: `/api/health` is NOT exempt (only the root `/health` path is); an
+unauthenticated poll of `/api/health` above ~20/min gets 429s.
+
+Auth sessions rotate on every authenticated request: each response carries
+`X-New-Access-Token` and the previous token is invalidated
+(`get_current_user` in `prequal-platform/app/routers/auth.py`). Load clients
+MUST chain that header per virtual user - reusing a token twice returns 401
+"Session is invalid or has expired".
 
 ## Running baseline tests
 
-k6 (primary):
+Stdlib harness (primary - no installs, rate-limit and token-rotation aware):
 
 ```bash
-k6 run -e BASE_URL=https://staging.prequal.yourcompany.com loadtests/k6-analytics.js
+python loadtests/baseline_staging.py \
+  --base-url https://prequal-staging-api.onrender.com
 ```
 
-Locust (secondary, API-heavy profile):
+Profile: register+login 8 users (pacing under register/login limits), then
+3 VUs x 120s -> 8 VUs x 180s -> 8 VUs x 60s peak (think 0.5-2s), endpoint mix
+1x health / 4x `/api/analytics/summary` / 3x
+`/api/analytics/compliance/summary`. Writes `loadtests/baseline_results_<ts>.csv`.
+
+Locust (secondary, API-heavy profile, `pip install locust`):
 
 ```bash
 cd prequal-platform
-locust -f tests/locustfile.py --host=https://staging.prequal.yourcompany.com --headless -u 50 -r 10 --run-time 180s
+locust -f tests/locustfile.py --host=https://prequal-staging-api.onrender.com \
+  --headless -u 8 -r 1 --run-time 180s
 ```
+
+k6 (reference profile only, see note above).
 
 ## Thresholds
 
-Mirrors the CloudWatch alarms in terraform:
-
-| Metric        | Threshold        |
-| ------------- | ---------------- |
-| p95 latency   | < 2000 ms        |
-| Error rate    | < 1%             |
-| Test profile  | ramp 20 -> 50 VUs over 9 min |
+| Metric        | Threshold |
+| ------------- | --------- |
+| p95 latency   | < 2000 ms |
+| Error rate    | < 1%      |
 
 ## Baseline benchmark record
 
-Capture from each run (k6 summary or CloudWatch): p50/p95/p99 latency,
-throughput (req/s), error rate, ECS CPU/memory, RDS connections.
-
 | Run | Date | Profile | p50 (ms) | p95 (ms) | p99 (ms) | req/s | Error rate | Notes |
 | --- | ---- | ------- | -------- | -------- | -------- | ----- | ---------- | ----- |
-| (pending — first run after staging is live) | | | | | | | | |
+| 1 | 2026-10-11 | 3->8 VUs, 365s, 8 authed users | 1351 | 1750 | 2370 | 2.50 | 0.00% | PASS both thresholds. Render free instance warm; summary p95 1905 / compliance p95 1441. Max 2908 ms. |
