@@ -290,8 +290,10 @@ jobs:
           fi
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
           # VITE_API_URL points the frontend at the Render API (upsert=true makes re-runs update in place)
+          # All backend routers mount under /api/... so the base URL MUST carry the
+          # /api suffix (MID-680) - e.g. https://prequal-staging-api.onrender.com/api
           curl -sS -X POST -H "$auth" -H "Content-Type: application/json" \
-            -d "{\"key\": \"VITE_API_URL\", \"value\": \"$RENDER_URL\", \"type\": \"plain\", \"target\": [\"production\", \"preview\", \"development\"]}" \
+            -d "{\"key\": \"VITE_API_URL\", \"value\": \"${RENDER_URL%/}/api\", \"type\": \"plain\", \"target\": [\"production\", \"preview\", \"development\"]}" \
             "https://api.vercel.com/v9/projects/$project_id/environment-variables?upsert=true" >/dev/null || \
             echo "::warning::VITE_API_URL env upsert returned non-200 (check Vercel project env)"
 
@@ -351,7 +353,14 @@ jobs:
             echo "::warning::Render service not found - skipping CORS update"
             exit 0
           fi
-          origins="http://localhost:5173,$VERCEL_URL"
+          # Keep in sync with the ALLOWED_ORIGINS in the root render.yaml blueprint (MID-680)
+          origins="https://prequal-staging.vercel.app,http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"
+          # Trust the observed deploy URL over the assumed name: if Vercel assigned
+          # a different domain, allow it too so the browser check cannot CORS-fail.
+          case ",$origins," in
+            *",$VERCEL_URL,"*) : ;;
+            *) origins="$origins,$VERCEL_URL" ;;
+          esac
           echo "Setting ALLOWED_ORIGINS=$origins"
           curl -sS -X PUT -H "$auth" -H "Content-Type: application/json" \
             -d "{\"value\": \"$origins\"}" \
