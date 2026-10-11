@@ -11,11 +11,13 @@ python -m pytest tests/ -v --cov=app --cov=api --cov-report=xml --cov-report=htm
 | Environment | Interpreter | Commit | Result |
 | --- | --- | --- | --- |
 | CI (`test` job, ubuntu-latest) | Python 3.11 | `develop@1306383` | 70.77% — below the 80% gate, job red |
+| CI (`test` job, ubuntu-latest) | Python 3.11 | `develop@d907ddf` | 74.54% |
 | Local (win32) | Python 3.14 | `develop@c72b323` | 73.0% (758 passed, 6 skipped) |
+| Local (win32) | Python 3.14 | `task/mid-676@d907ddf` | 80.0% (871 passed, 5 skipped) |
 
-The suite itself is green in both places and the pass/skip counts match
-(758 passed, 6 skipped), so the red CI status is caused **only** by the
-coverage floor.
+The suite itself is green in both places, so red CI status has been caused
+**only** by the coverage floor (the historical 764 `readonly database` errors
+were fixed separately under [MID-671](/MID/issues/MID-671)).
 
 ## Interim ratchet
 
@@ -30,11 +32,13 @@ Ratchet history (floor only ever moves **upward**):
 | --- | --- | --- |
 | `1c99e82` | `80` -> `70` | Unblock the coverage-only red `test` job (CI 70.77%). |
 | `b2da8c3` | `70` -> `71` | Billing tests add ~114 covered lines (~+1.3pp); CI measured 73.34% at that commit, so `71` was below the lower bound. |
-| MID-676 compliance tests | `71` -> `75` | Compliance-router tests add ~470 covered lines (~+5pp). Off the measured CI baseline (73.34%) that lands ~78%, so `75` is set with ~3pp of margin -- the ratchet only moves upward, so it is kept conservatively below the estimate. |
+| `d907ddf` | `71` -> `74` | Compliance-router tests (local 77% -> 80%). CI measured **74.54%** on `develop`, so the floor is set to the highest integer at/below measured CI coverage. (An intermediate `75` overshot and was corrected down to `74`; `74` is still above the prior `71`, so the gate never became weaker than a verified floor.) |
 
-## Local vs CI discrepancy (~2.2pp, open)
+## Local vs CI discrepancy (~5pp at `d907ddf`, open)
 
-Local coverage is consistently ~2pp higher than CI. Contributing factors:
+Local coverage has ranged ~2-5pp higher than CI. Latest measurements:
+`develop@b2da8c3` CI 73.34% vs local 77%; `develop@d907ddf` CI **74.54%** vs
+local **80%** (+5.5pp). Contributing factors:
 
 1. **Different commit.** The CI figure (70.77%) was captured on
    `develop@1306383`, before `c72b323` (MID-661) and the MID-662 DB-pool
@@ -120,7 +124,9 @@ tenant scoping is intentionally unscoped).
 | `app/routers/compliance.py` | 43% | 85% | `tests/test_compliance_router_crud.py` |
 
 Global local total after these additions: **80%** (871 passed, 5 skipped;
-Python 3.14, `task/mid-676`). Floor raised `71 -> 75` (see above).
+Python 3.14, `task/mid-676`). CI measured **74.54%** on `develop` at `d907ddf`
+-- note CI runs ~5pp below local here, so the floor is set from the CI number,
+not the local one. Floor raised `71 -> 74` (see above).
 
 #### Bugs found and fixed
 
