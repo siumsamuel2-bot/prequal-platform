@@ -144,10 +144,29 @@ not the local one. Floor raised `71 -> 74` (see above).
    decrypt step to *after* the audit commit in `get_projects`, `create_project`
    and `update_project` (no pending writes are left across a commit).
 
+### Added: `app/services/external_compliance_pipeline.py`
+
+`tests/test_external_compliance_pipeline_extra.py` covers the parts the existing
+suite missed: `find_subcontractor_by_*` (guards / normalisation / name
+fallback), `record_pipeline_metric` (success + swallowed failure), `_parse_dt`
+coercion edge cases, `_refresh_materialized_view` concurrent -> non-concurrent
+fallback, `refresh_analytics_views` (SQLite short-circuit + PostgreSQL path),
+and `run_full_pipeline` orchestration (success, OSHA failure, per-state
+failure, env-based state discovery + de-dupe). DB sessions, sync entry points
+and the MV refresh are replaced with lightweight fakes; no network or real DB.
+
+| Module | Before | After | Tests |
+| --- | --- | --- | --- |
+| `app/services/external_compliance_pipeline.py` | 65% | 77% | `tests/test_external_compliance_pipeline_extra.py` |
+
+Global local total after these additions: **81%** (891 passed, 5 skipped).
+Floor stays `74` until a fresh CI run reports the new global total (CI runs
+~5pp below local, so the floor is not raised from a local estimate).
+
 ### Remaining largest gaps (final target `--cov-fail-under=80`)
 
-- `services/external_compliance_pipeline.py` (~506 stmts, 65%)
 - `routers/alerts.py` (47%), `services/alert_service.py` (41%), alert delivery paths
 - Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py` (see above)
 - `middleware/rate_limit.py` (77%), `services/data_quality_monitoring.py` (~85%), `services/source_db_connector.py` (~83%)
 - `routers/auth.py` (~85%), `routers/analytics.py` (~79%), `services/analytics_pipeline.py` (63%)
+- `services/external_compliance_pipeline.py` (77%, `_process_*` / `_log_run` internals remain)
