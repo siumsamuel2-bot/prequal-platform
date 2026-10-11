@@ -163,9 +163,30 @@ Global local total after these additions: **81%** (891 passed, 5 skipped).
 Floor stays `74` until a fresh CI run reports the new global total (CI runs
 ~5pp below local, so the floor is not raised from a local estimate).
 
+### Added: `app/services/alert_service.py`
+
+`tests/test_alert_service_delivery.py` (14 tests) exercises the delivery and
+summary surface the alerting suite missed: `get_alert_summary` (platform-wide
+and team-scoped), `_get_users_to_notify_for_subcontractor` (opt-in/opt-out and
+inactive-user exclusion), `_send_alert_to_user` (email success, SMS fallback,
+both-channels-fail, and no-channel paths), `deliver_pending_alerts`
+(sent/failed/skipped status transitions + SMS counting), and the 7-day scan
+window. `send_notification` is monkeypatched; every test runs against a real
+async session.
+
+| Module | Before | After | Tests |
+| --- | --- | --- | --- |
+| `app/services/alert_service.py` | 41% | 98% | `tests/test_alert_service_delivery.py` |
+
+Only `deliver_pending_alerts`' "alert has no certification" guard (lines
+383-385) remains uncovered: it is unreachable while the `certification_id`
+foreign key is enforced. Local total measured on the alert suite rose ~1pp
+(7997 -> 4480 missed when running the alert modules). Floor stays `74` until CI
+reports the new global total.
+
 ### Remaining largest gaps (final target `--cov-fail-under=80`)
 
-- `routers/alerts.py` (47%), `services/alert_service.py` (41%), alert delivery paths
+- `routers/alerts.py` (47%), alert service delivery paths now 98% (`services/alert_service.py`)
 - Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py` (see above)
 - `middleware/rate_limit.py` (77%), `services/data_quality_monitoring.py` (~85%), `services/source_db_connector.py` (~83%)
 - `routers/auth.py` (~85%), `routers/analytics.py` (~79%), `services/analytics_pipeline.py` (63%)
