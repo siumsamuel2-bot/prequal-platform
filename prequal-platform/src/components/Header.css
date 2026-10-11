@@ -44,6 +44,26 @@
   font-size: 14px;
 }
 
+.header-button.whats-new-btn {
+  color: #1a237e;
+}
+
+.header-button.whats-new-btn:hover {
+  background-color: #eef2ff;
+  border-color: #1a237e;
+}
+
+.whats-new-dot {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #f44336;
+  border: 2px solid #ffffff;
+}
+
 .header-button.feedback-btn {
   color: #3b82f6;
 }
