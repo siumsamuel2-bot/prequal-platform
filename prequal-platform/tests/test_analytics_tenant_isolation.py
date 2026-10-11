@@ -265,7 +265,7 @@ async def test_platform_endpoints_allowed_for_admin(async_client: AsyncClient) -
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture
-async def tenant_data(db_session: AsyncSession):
+async def tenant_data(db_session: AsyncSession, refresh_materialized_views):
     """Two teams with a project, a subcontractor (+cert) and events each."""
     team_a, team_b = uuid.uuid4(), uuid.uuid4()
     user_a, user_b = uuid.uuid4(), uuid.uuid4()
@@ -310,6 +310,13 @@ async def tenant_data(db_session: AsyncSession):
         AnalyticsEvent(event_type="page_view", event_name="event-b", user_id=user_b),
     ])
     await db_session.commit()
+
+    # Analytics read endpoints serve pre-computed data from these materialized
+    # views, which Alembic creates empty on PostgreSQL. Refresh them so the
+    # seeded rows are visible, mirroring the scheduled ETL refresh (MID-656).
+    await refresh_materialized_views(
+        "mv_project_compliance", "mv_certification_status"
+    )
 
     fastapi_app.dependency_overrides[get_current_user] = lambda: TokenData(
         sub="a@example.com", user_id=str(user_a), role="member", team_id=str(team_a)

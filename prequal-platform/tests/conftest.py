@@ -735,6 +735,29 @@ async def async_client(db_engine):
         yield client
 
 
+@pytest_asyncio.fixture
+async def refresh_materialized_views():
+    """Return a helper that refreshes PostgreSQL materialized views.
+
+    Analytics read endpoints query materialized views (``mv_project_compliance``,
+    ``mv_certification_status``, ...) that Alembic creates empty. On PostgreSQL
+    those views are real MVs and only reflect base-table changes after a
+    ``REFRESH`` (done by the scheduled ETL in production), so end-to-end tests
+    that seed base tables must refresh before asserting on the endpoints.
+    SQLite uses ordinary views, so this is a no-op there (MID-656).
+    """
+    from sqlalchemy import text
+
+    async def _refresh(*view_names: str) -> None:
+        if not _use_postgres:
+            return
+        async with engine.begin() as conn:
+            for view_name in view_names:
+                await conn.execute(text(f"REFRESH MATERIALIZED VIEW {view_name}"))
+
+    return _refresh
+
+
 @pytest_asyncio.fixture(autouse=True, scope="module")
 async def reset_shared_tables(db_engine):
     """Clear shared compliance-domain tables at each test module boundary (MID-634).
