@@ -127,9 +127,11 @@ async def get_subscription_status(
     limit = get_tier_limit(plan)
     can_add = check_subcontractor_limit(plan, subcontractor_count)
 
+    status_value = getattr(subscription.status, "value", subscription.status)
+
     return SubscriptionStatusResponse(
         plan=plan,
-        status=subscription.status.value if subscription.status else "inactive",
+        status=status_value or "inactive",
         current_period_end=subscription.current_period_end.isoformat() if subscription.current_period_end else None,
         subcontractor_limit=limit,
         subcontractor_count=subcontractor_count,
