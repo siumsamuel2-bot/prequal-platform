@@ -201,6 +201,24 @@ records the SQL/binds so the dialect branching is asserted directly.
 
 Global local total after these additions: **84%** (953 passed, 5 skipped).
 
+### Added: `app/services/encryption_service.py` + `app/services/secrets_manager.py`
+
+Data-at-rest / runtime-secrets infrastructure (deterministic, no network):
+
+- `tests/test_encryption_service.py` (15 tests): `_get_fernet_key` derivation
+  and dev fallback, the cached Fernet handle, local round-trip and the
+  None/empty short-circuits, the re-raise paths, and the AWS KMS branches
+  (success, missing `boto3`, KMS error -> local fallback) via a fake `boto3`.
+  `encryption_service.py` **53% -> 100%**.
+- `tests/test_secrets_manager.py` (25 tests): `_is_truthy` /
+  `_parse_secret_payload`, the lazy + locked `_get_client` (success, missing
+  `boto3`, creation failure), `get_secret` resolution order (env > vault >
+  default), `get_secrets` / `refresh` caching, and `hydrate_environment`
+  (plain + JSON payloads, never overwriting env). `secrets_manager.py`
+  **82% -> 97%**.
+
+Global local total after these additions: **84%** (984 passed, 5 skipped).
+
 ### Note: measuring local coverage
 
 `pytest --cov` on the win32/py3.14 box aborts at conftest import with a `bcrypt`
