@@ -185,10 +185,35 @@ foreign key is enforced. Local total measured on the alert suite rose ~1pp
 (7997 -> 4480 missed when running the alert modules). Floor stays `74` until CI
 reports the new global total.
 
+### Added: `app/services/analytics_pipeline.py`
+
+`tests/test_analytics_pipeline_extra.py` (17 tests) covers the dialect helpers
+`_team_filter_value` / `_days_ago_expr` (SQLite vs PostgreSQL vs failed dialect
+detection), `_to_iso` / `_safe_rate`, `refresh_all_analytics_views` /
+`_refresh_view` (concurrent + non-concurrent), the pagination `*_count`
+wrappers, and the row mapping in `get_project_compliance_by_id`,
+`get_feature_adoption_summary` and `get_system_health_summary`. A fake session
+records the SQL/binds so the dialect branching is asserted directly.
+
+| Module | Before | After | Tests |
+| --- | --- | --- | --- |
+| `app/services/analytics_pipeline.py` | 63% | 90% | `tests/test_analytics_pipeline_extra.py` |
+
+Global local total after these additions: **84%** (953 passed, 5 skipped).
+
+### Note: measuring local coverage
+
+`pytest --cov` on the win32/py3.14 box aborts at conftest import with a `bcrypt`
+PyO3 error (`may only be initialized once per interpreter process`) when the
+default (C) coverage tracer is used. Setting `COVERAGE_CORE=sysmon` makes
+`--cov` work again (Python 3.12+ sys.monitoring tracer). Use that env var when
+measuring locally; CI is unaffected (py3.11 + its own tracer works).
+
 ### Remaining largest gaps (final target `--cov-fail-under=80`)
 
-- `routers/alerts.py` (47%), alert service delivery paths now 98% (`services/alert_service.py`)
-- Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py` (see above)
-- `middleware/rate_limit.py` (77%), `services/data_quality_monitoring.py` (~85%), `services/source_db_connector.py` (~83%)
-- `routers/auth.py` (~85%), `routers/analytics.py` (~79%), `services/analytics_pipeline.py` (63%)
+- `middleware/rate_limit.py` (77%), `routers/alerts.py` (47%)
+- `routers/auth.py` (~85%), `routers/compliance.py` (85%), `routers/analytics.py` (~79%)
+- `services/data_quality_monitoring.py` (~85%), `services/source_db_connector.py` (~83%), `services/credential_service.py` (78%)
 - `services/external_compliance_pipeline.py` (77%, `_process_*` / `_log_run` internals remain)
+- `routers/credentials.py` (54%), `routers/webhooks.py` (58%), `services/encryption_service.py` (53%)
+- Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py` (see above)
