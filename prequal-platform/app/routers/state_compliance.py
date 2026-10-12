@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.state_compliance import StateComplianceSource
+from app.routers.auth import require_manager_or_admin, TokenData
 from app.services.state_compliance_service import (
     lookup_contractor_in_state,
     sync_state_credentials,
@@ -102,7 +103,11 @@ async def search_across_states(
 
 
 @router.post("/sync/{state_code}")
-async def trigger_state_sync(state_code: str, db: AsyncSession = Depends(get_db)):
+async def trigger_state_sync(
+    state_code: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(require_manager_or_admin),
+):
     return await sync_state_credentials(state_code, db=db)
 
 
@@ -114,7 +119,8 @@ async def create_state_source(
     api_url: Optional[str] = None,
     api_key_env_var: Optional[str] = None,
     priority: int = 0,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: TokenData = Depends(require_manager_or_admin),
 ):
     existing = await db.execute(
         select(StateComplianceSource).where(StateComplianceSource.state_code == state_code.upper())
