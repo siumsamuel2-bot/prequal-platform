@@ -11,8 +11,8 @@
 
 .layout-content {
   flex: 1;
-  padding: 24px;
-  background-color: #f5f7fa;
+  padding: var(--space-6);
+  background-color: var(--color-bg);
   overflow-y: auto;
 }
 
@@ -22,12 +22,12 @@
   }
 
   .layout-content {
-    padding: 16px;
+    padding: var(--space-4);
   }
 }
 
 @media (max-width: 768px) {
   .layout-content {
-    padding: 12px;
+    padding: var(--space-3);
   }
 }
