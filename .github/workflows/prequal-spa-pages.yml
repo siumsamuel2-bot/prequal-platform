@@ -130,6 +130,14 @@ jobs:
           </html>
           EOF
 
+      - name: Setup Pages (enable if not yet enabled)
+        # MID-695: first-ever Pages publish in this repo. enablement:true lets
+        # the workflow create the Pages site (source = GitHub Actions) using
+        # the pages:write permission, so no dashboard click is required.
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
