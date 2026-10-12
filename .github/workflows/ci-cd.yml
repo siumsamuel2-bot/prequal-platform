@@ -309,13 +309,14 @@ jobs:
           #   - local (win32, py3.14, task/mid-676 after billing tests): 77.0%
           #   - local (win32, py3.14, task/mid-676 after compliance tests): 80%
           #   - CI (ubuntu, py3.11, develop@d907ddf): 74.54%
-          #   - CI (ubuntu, py3.11, develop@cf77182): 76.41% (936 passed,
-          #     5 skipped) -- floor 74 met. Raise to 76, the highest integer
-          #     at/below measured CI coverage. CI runs ~5pp below local, so the
-          #     floor is always set from the CI number, never a local estimate.
+          #   - CI (ubuntu, py3.11, develop@cf77182): 76.41% (floor 74 met)
+          #   - CI (ubuntu, py3.11, develop@56cab27): 77.52% (993 passed,
+          #     5 skipped) -- raise to 77, the highest integer at/below the
+          #     measured CI total. CI runs ~6pp below local here, so the floor
+          #     is always set from the CI number, never a local estimate.
           # Raise this value as coverage improves; final target is 80.
           # See prequal-platform/docs/backend-test-coverage.md (MID-676).
-          python -m pytest tests/ -v --cov=app --cov=api --cov-report=xml --cov-report=html --cov-fail-under=76
+          python -m pytest tests/ -v --cov=app --cov=api --cov-report=xml --cov-report=html --cov-fail-under=77
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v4

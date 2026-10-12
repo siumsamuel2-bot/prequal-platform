@@ -34,6 +34,7 @@ Ratchet history (floor only ever moves **upward**):
 | `b2da8c3` | `70` -> `71` | Billing tests add ~114 covered lines (~+1.3pp); CI measured 73.34% at that commit, so `71` was below the lower bound. |
 | `d907ddf` | `71` -> `74` | Compliance-router tests (local 77% -> 80%). CI measured **74.54%** on `develop`, so the floor is set to the highest integer at/below measured CI coverage. (An intermediate `75` overshot and was corrected down to `74`; `74` is still above the prior `71`, so the gate never became weaker than a verified floor.) |
 | `cf77182` | `74` -> `76` | Alerts router + alert delivery/summary tests. CI measured **76.41%** on `develop` (936 passed, 5 skipped), so the floor is set to the highest integer at/below it. |
+| `56cab27` | `76` -> `77` | Analytics-pipeline + encryption/secrets tests. CI measured **77.52%** on `develop` (993 passed, 5 skipped). |
 
 ## Local vs CI discrepancy (~5pp at `d907ddf`, open)
 
@@ -233,5 +234,6 @@ measuring locally; CI is unaffected (py3.11 + its own tracer works).
 - `routers/auth.py` (~85%), `routers/compliance.py` (85%), `routers/analytics.py` (~79%)
 - `services/data_quality_monitoring.py` (~85%), `services/source_db_connector.py` (~83%), `services/credential_service.py` (78%)
 - `services/external_compliance_pipeline.py` (77%, `_process_*` / `_log_run` internals remain)
-- `routers/credentials.py` (54%), `routers/webhooks.py` (58%), `services/encryption_service.py` (53%)
+- `routers/credentials.py` (54%), `routers/webhooks.py` (58%)
 - Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py` (see above)
+- `app/services/encryption_service.py` now 100%, `secrets_manager.py` 97% (done).
