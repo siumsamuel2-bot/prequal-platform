@@ -59,6 +59,10 @@ jobs:
           python-version: '3.11'
 
       - name: Generate OpenAPI spec
+        env:
+          # Import-time requirement only (app.routers.auth raises without it);
+          # throwaway value, no secrets involved, never leaves this job.
+          SECRET_KEY: docs-spec-throwaway-not-a-secret
         run: |
           cd prequal-platform
           pip install -r requirements.txt
