@@ -43,3 +43,30 @@ services:
         value: "60"
     healthCheckPath: /health
     autoDeploy: true
+
+  # Frontend fallback host (MID-685): insurance for the pilot while the
+  # board's Vercel import keeps 404ing (MID-71). Same Vite build as the
+  # Vercel path (which stays primary and untouched). Render rewrites with
+  # absolute destinations are server-side proxied, so the SPA keeps calling
+  # same-origin /api (its default, prequal-platform/src/api/client.ts) with
+  # NO VITE_API_URL build env and NO CORS changes. Plan B if the proxy ever
+  # misbehaves: set build env VITE_API_URL=https://prequal-staging-api.onrender.com/api
+  # and append this site's origin to ALLOWED_ORIGINS above, then redeploy.
+  - type: static
+    name: prequal-staging-frontend
+    branch: develop
+    rootDir: prequal-platform
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: NODE_VERSION
+        value: "18"
+    routes:
+      # Order matters: /api/* must match before the catch-all SPA fallback.
+      - type: rewrite
+        source: /api/*
+        destination: https://prequal-staging-api.onrender.com/api/*
+      # SPA client-side routing fallback: any non-file path -> index.html.
+      - type: rewrite
+        source: /*
+        destination: /index.html

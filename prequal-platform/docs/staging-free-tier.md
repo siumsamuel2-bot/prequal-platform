@@ -56,6 +56,21 @@ curl -f -s https://<render-api-url>/health   # wake the service
 
 Record results on MID-625.
 
+## Frontend fallback host (MID-685, insurance path)
+
+If the board's Vercel import keeps failing, the root `render.yaml` blueprint now also defines a **Render Static Site** for the SPA (`prequal-staging-frontend`, free tier): same Vite build (`npm ci && npm run build`, publish `dist`, Node 18 to match CI), plus two rewrite rules:
+
+- `/api/*` -> `https://prequal-staging-api.onrender.com/api/*` (server-side proxy - the SPA's same-origin default, so no `VITE_API_URL` and **no CORS change**)
+- `/*` -> `/index.html` (SPA client-side routing fallback; must stay second)
+
+Board click-path (fallback only - the Vercel deploy stays primary; do not remove it):
+
+1. Render dashboard -> open the existing `prequal-staging` Blueprint -> **Apply Changes** (Render detects the new `prequal-staging-frontend` static service from `render.yaml`). Alternatively: New + -> Static Site -> connect the repo, set Root Directory `prequal-platform`, build `npm ci && npm run build`, publish `dist`, add the two rewrite rules above in that order.
+2. Wait for the build (~2-3 min), then open `https://prequal-staging-frontend.onrender.com` and verify: SPA loads, register/login works, dashboard data loads (API proxied same-origin).
+3. Realtime note: WebSockets are not proxied by the static CDN; the app automatically falls back to polling (`useRealtimeConnection`).
+
+If the proxy path ever misbehaves, plan B: set build env `VITE_API_URL=https://prequal-staging-api.onrender.com/api` and append `https://prequal-staging-frontend.onrender.com` to the API service's `ALLOWED_ORIGINS`, then redeploy both.
+
 ## Notes
 
 - **Deploy branch is `develop` — always.** `master`/`main` are NOT the deploy branch. Both `render.yaml` and `render.staging-free.yaml` pin `branch: develop` (MID-678), matching the CI `deploy-staging` job; a service left on the repo default branch builds stale code — this caused the migration-016 staging outage (MID-675).
