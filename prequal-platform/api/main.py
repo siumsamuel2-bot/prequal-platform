@@ -89,9 +89,26 @@ setup_rate_limiting(app)
 setup_audit_logging(app)
 setup_correlation_id(app)
 
+# MID-695: GitHub Pages pilot origin. The staging service's ALLOWED_ORIGINS
+# env var was set at provision time (Render applies blueprint env vars only
+# on blueprint apply, not on auto-deploy), so the render.yaml update alone
+# would not reach the live service without a board click. This explicit,
+# origin-exact addition (no wildcard, no regex) keeps the Pages SPA working
+# immediately after auto-deploy. Idempotent if the env var is updated later.
+_DEFAULT_ALLOWED_ORIGINS = "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173"
+_PILOT_PAGES_ORIGIN = "https://siumsamuel2-bot.github.io"
+
+_allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", _DEFAULT_ALLOWED_ORIGINS).split(",")
+    if origin.strip()
+]
+if _PILOT_PAGES_ORIGIN not in _allowed_origins:
+    _allowed_origins.append(_PILOT_PAGES_ORIGIN)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5173").split(",")],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],

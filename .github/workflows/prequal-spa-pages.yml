@@ -1,0 +1,143 @@
+# MID-695: Board-independent pilot go-live - deploy the SPA to GitHub Pages.
+#
+# GitHub Pages serves ONE site per repo. Previously api-docs-pages.yml
+# deployed the swagger docs to the site root on pushes to main, which would
+# clobber the SPA. This workflow is now the single owner of the Pages site:
+#   - SPA at the site root (/prequal-platform/)
+#   - API swagger docs kept at the /prequal-platform/api-docs/ subpath
+# It deploys the built SPA (prequal-platform/dist) built against the live
+# staging API (Render free tier) with build-time env:
+#   - VITE_API_URL    -> injected into the bundle as __API_URL__ (vite define)
+#   - VITE_BASE_PATH  -> Vite `base`, so assets resolve under the project
+#                        subpath; other hosts (Vercel/Render root) keep '/'
+#
+# SPA deep links: index.html is copied to 404.html so GitHub Pages serves
+# the SPA shell for unknown paths and react-router (BrowserRouter) can
+# route client-side.
+
+name: Deploy SPA to GitHub Pages
+
+on:
+  push:
+    branches: [ develop ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: prequal-platform/package-lock.json
+
+      - name: Build SPA (against live staging API)
+        env:
+          VITE_API_URL: https://prequal-staging-api.onrender.com
+          VITE_BASE_PATH: /prequal-platform/
+        run: |
+          cd prequal-platform
+          npm ci
+          npm run build
+
+      - name: Setup Python (OpenAPI spec for docs subpath)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate OpenAPI spec
+        run: |
+          cd prequal-platform
+          pip install -r requirements.txt
+          python -c "
+          import json
+          from api.main import app
+          openapi = app.openapi()
+          with open('openapi.json', 'w') as f:
+              json.dump(openapi, f, indent=2)
+          "
+
+      - name: Assemble Pages site (SPA root + docs subpath + 404 fallback)
+        run: |
+          mkdir -p site/api-docs
+          cp -r prequal-platform/dist/. site/
+          # SPA deep-link fallback for BrowserRouter on static hosting
+          cp prequal-platform/dist/index.html site/404.html
+          # Swagger docs kept at the api-docs subpath
+          cp prequal-platform/openapi.json site/api-docs/openapi.json
+          cat > site/api-docs/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Prequal API Documentation</title>
+              <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+              <style>
+                  body { margin: 0; padding: 0; }
+                  #swagger-ui { max-width: 1460px; margin: 0 auto; }
+                  header {
+                      background: #1a1a2e;
+                      color: white;
+                      padding: 1rem 2rem;
+                      text-align: center;
+                  }
+                  header h1 { margin: 0; }
+                  header p { margin: 0.5rem 0 0; opacity: 0.8; }
+              </style>
+          </head>
+          <body>
+              <header>
+                  <h1>Prequal API Documentation</h1>
+                  <p>Subcontractor Compliance Platform</p>
+              </header>
+              <div id="swagger-ui"></div>
+              <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+              <script>
+                  window.onload = function() {
+                      SwaggerUIBundle({
+                          url: "openapi.json",
+                          dom_id: '#swagger-ui',
+                          presets: [
+                              SwaggerUIBundle.presets.apis,
+                              SwaggerUIBundle.SwaggerUIStandalonePreset
+                          ],
+                          layout: "BaseLayout",
+                          deepLinking: true,
+                          showExtensions: true,
+                          showCommonExtensions: true
+                      });
+                  };
+              </script>
+          </body>
+          </html>
+          EOF
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

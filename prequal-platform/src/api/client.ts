@@ -1,4 +1,14 @@
-const API_BASE_URL = (typeof process !== 'undefined' && process.env && process.env.VITE_API_URL) || '/api';
+// MID-695: __API_URL__ is injected at build time by Vite's `define` (set from
+// VITE_API_URL). `typeof __API_URL__` is safe on hosts where no value is
+// injected (falls through to process.env for Jest, then same-origin '/api').
+// Note: plain `process.env.VITE_API_URL` is NOT available in Vite browser
+// builds (no process polyfill), which is why the build-time injection exists.
+declare const __API_URL__: string | undefined;
+
+const API_BASE_URL =
+  (typeof __API_URL__ !== 'undefined' && __API_URL__) ||
+  (typeof process !== 'undefined' && process.env && process.env.VITE_API_URL) ||
+  '/api';
 
 interface RequestOptions extends RequestInit {
   params?: Record<string, string>;

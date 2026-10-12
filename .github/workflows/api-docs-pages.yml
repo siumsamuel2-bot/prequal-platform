@@ -1,9 +1,13 @@
+# MID-695: GitHub Pages serves ONE site per repo. This workflow previously
+# deployed the swagger docs to the Pages site ROOT on every push to main,
+# which would clobber the SPA (prequal-spa-pages.yml is now the single
+# owner of the Pages site). The docs now ship at the api-docs/ subpath of
+# the combined site built by prequal-spa-pages.yml. Trigger reduced to
+# workflow_dispatch to avoid any accidental root takeover; this job is kept
+# only as a manual fallback for standalone docs publishing.
 name: Publish API Documentation
 
 on:
-  push:
-    branches: [ main ]
-    tags: [ 'v*' ]
   workflow_dispatch:
 
 permissions:

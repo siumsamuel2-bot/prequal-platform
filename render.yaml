@@ -47,9 +47,10 @@ services:
         # Browser-facing ORIGINS (scheme + host) allowed to call the API with
         # credentials - not API base URLs. Includes BOTH possible Vercel
         # frontend origins (the board's project resolves to
-        # prequal-platform.vercel.app) plus local Vite dev servers. Kept
-        # identical to render.staging-free.yaml.
-        value: http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,https://prequal-platform.vercel.app,https://prequal-staging.vercel.app
+        # prequal-platform.vercel.app), the GitHub Pages origin used by the
+        # board-independent SPA deploy (MID-695), plus local Vite dev
+        # servers. Kept identical to render.staging-free.yaml.
+        value: http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000,https://prequal-platform.vercel.app,https://prequal-staging.vercel.app,https://siumsamuel2-bot.github.io
       - key: RATE_LIMIT_PER_MINUTE
         value: "60"
     healthCheckPath: /health
