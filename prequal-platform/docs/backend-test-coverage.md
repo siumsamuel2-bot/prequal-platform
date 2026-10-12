@@ -33,6 +33,7 @@ Ratchet history (floor only ever moves **upward**):
 | `1c99e82` | `80` -> `70` | Unblock the coverage-only red `test` job (CI 70.77%). |
 | `b2da8c3` | `70` -> `71` | Billing tests add ~114 covered lines (~+1.3pp); CI measured 73.34% at that commit, so `71` was below the lower bound. |
 | `d907ddf` | `71` -> `74` | Compliance-router tests (local 77% -> 80%). CI measured **74.54%** on `develop`, so the floor is set to the highest integer at/below measured CI coverage. (An intermediate `75` overshot and was corrected down to `74`; `74` is still above the prior `71`, so the gate never became weaker than a verified floor.) |
+| `cf77182` | `74` -> `76` | Alerts router + alert delivery/summary tests. CI measured **76.41%** on `develop` (936 passed, 5 skipped), so the floor is set to the highest integer at/below it. |
 
 ## Local vs CI discrepancy (~5pp at `d907ddf`, open)
 
