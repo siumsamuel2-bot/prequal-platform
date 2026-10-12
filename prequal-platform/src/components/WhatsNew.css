@@ -18,7 +18,7 @@
   height: 100%;
   width: 420px;
   max-width: 100%;
-  background-color: #ffffff;
+  background-color: var(--color-surface);
   display: flex;
   flex-direction: column;
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
@@ -32,20 +32,20 @@
   justify-content: space-between;
   gap: 12px;
   padding: 20px 24px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .whats-new-title {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
-  color: #1a237e;
+  color: var(--color-primary-active);
 }
 
 .whats-new-subtitle {
   margin: 4px 0 0;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--color-text-muted);
 }
 
 .whats-new-close {
@@ -57,17 +57,17 @@
   background: none;
   border: none;
   border-radius: 6px;
-  color: #6b7280;
+  color: var(--color-text-muted);
   cursor: pointer;
 }
 
 .whats-new-close:hover {
-  background-color: #f3f4f6;
-  color: #111827;
+  background-color: var(--color-surface-muted);
+  color: var(--color-text);
 }
 
 .whats-new-close:focus-visible {
-  outline: 2px solid #3b82f6;
+  outline: 2px solid var(--color-primary);
   outline-offset: 2px;
 }
 
@@ -80,7 +80,7 @@
 .whats-new-release {
   padding-bottom: 20px;
   margin-bottom: 20px;
-  border-bottom: 1px solid #f3f4f6;
+  border-bottom: 1px solid var(--color-surface-muted);
 }
 
 .whats-new-release:last-child {
@@ -100,20 +100,20 @@
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: #1a237e;
+  color: var(--color-primary-active);
 }
 
 .whats-new-release-title {
   margin: 10px 0 4px;
   font-size: 16px;
   font-weight: 600;
-  color: #111827;
+  color: var(--color-text);
 }
 
 .whats-new-release-summary {
   margin: 0 0 12px;
   font-size: 14px;
-  color: #4b5563;
+  color: var(--color-text-muted);
 }
 
 .whats-new-change {
@@ -131,7 +131,7 @@
 .whats-new-change-list li {
   font-size: 14px;
   line-height: 1.5;
-  color: #374151;
+  color: var(--color-text);
 }
 
 .whats-new-empty {
@@ -148,13 +148,13 @@
   margin: 0 0 6px;
   font-size: 16px;
   font-weight: 600;
-  color: #111827;
+  color: var(--color-text);
 }
 
 .whats-new-empty-text {
   margin: 0;
   font-size: 14px;
-  color: #6b7280;
+  color: var(--color-text-muted);
 }
 
 @keyframes whatsNewSlideIn {
