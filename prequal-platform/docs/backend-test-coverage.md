@@ -35,6 +35,7 @@ Ratchet history (floor only ever moves **upward**):
 | `d907ddf` | `71` -> `74` | Compliance-router tests (local 77% -> 80%). CI measured **74.54%** on `develop`, so the floor is set to the highest integer at/below measured CI coverage. (An intermediate `75` overshot and was corrected down to `74`; `74` is still above the prior `71`, so the gate never became weaker than a verified floor.) |
 | `cf77182` | `74` -> `76` | Alerts router + alert delivery/summary tests. CI measured **76.41%** on `develop` (936 passed, 5 skipped), so the floor is set to the highest integer at/below it. |
 | `56cab27` | `76` -> `77` | Analytics-pipeline + encryption/secrets tests. CI measured **77.52%** on `develop` (993 passed, 5 skipped). |
+| `c9d931a` | `77` -> `78` | data_quality_monitoring + source_db_connector tests. CI measured **78.26%** on `develop` (1042 passed, 5 skipped). |
 
 ## Local vs CI discrepancy (~5pp at `d907ddf`, open)
 
