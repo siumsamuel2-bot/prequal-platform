@@ -30,7 +30,12 @@ services:
     env: python
     plan: free
     rootDir: prequal-platform
-    buildCommand: pip install -r requirements.txt
+    # MID-699: the web service now ALSO builds the SPA and serves it
+    # same-origin from api/main.py (dist/ + index.html fallback), so
+    # https://prequal-staging-api.onrender.com/ serves the app directly.
+    # Node/npm are preinstalled in Render's Python native runtime, so the
+    # extra npm steps need no image change. Free tier unchanged.
+    buildCommand: pip install -r requirements.txt && npm ci && npm run build
     startCommand: alembic upgrade head && uvicorn api.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: ENVIRONMENT

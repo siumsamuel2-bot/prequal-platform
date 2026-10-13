@@ -2,10 +2,11 @@ from contextlib import asynccontextmanager
 import asyncio
 import logging
 import os
+from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.database import init_db, close_db, engine
 from app.routers import auth, compliance, alerts, credentials, analytics, webhooks, billing, state_compliance, audit, source_db, rate_limits, feedback
@@ -132,6 +133,33 @@ app.include_router(feedback.router)
 # Import and include health router (must be after app creation)
 from api import health
 app.include_router(health.router)
+
+# MID-699: serve the built SPA (prequal-platform/dist) same-origin from this
+# API service. The catch-all below is registered AFTER every API router, so
+# Starlette's registration-order matching keeps /api/*, /health, /metrics,
+# /docs, /redoc and /openapi.json in control of their paths; only requests
+# that match nothing else reach the SPA. Unknown client-side routes (e.g.
+# /dashboard) get index.html; real files in dist/ (hashed Vite assets,
+# favicon) are served directly. No-op when dist/ has not been built (local
+# dev keeps the previous 404 behavior).
+_frontend_dist = Path(__file__).resolve().parent.parent / "dist"
+
+if (_frontend_dist / "index.html").is_file():
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_frontend(full_path: str):
+        """Serve the built SPA with an index.html fallback for client routes."""
+        first_segment = full_path.split("/", 1)[0]
+        if first_segment in ("api", "health", "metrics", "docs", "redoc", "openapi.json"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        candidate = (_frontend_dist / full_path).resolve()
+        if (
+            full_path
+            and str(candidate).startswith(str(_frontend_dist) + os.sep)
+            and candidate.is_file()
+        ):
+            return FileResponse(candidate)
+        return FileResponse(_frontend_dist / "index.html")
 
 if __name__ == "__main__":
     import uvicorn
