@@ -236,6 +236,23 @@ orchestration, and `_persist_alert` swallowing a failing audit emission.
 
 Global local total after these additions: **85%** (1016 passed, 5 skipped).
 
+### Added: `app/services/source_db_connector.py`
+
+`tests/test_source_db_connector_extra.py` (26 tests) exercises the connector's
+retry surface directly: `_extract_error_code` / `is_retryable_error` /
+`classify_error`, `RetryConfig` validation + `calculate_backoff` (jitter +
+cap), the `CircuitBreaker` state machine incl. OPEN -> HALF_OPEN recovery
+(controlled clock), `ConnectorMetrics` counters + snapshot, `async_retry` /
+`retry_async` (success / retry-then-succeed / non-retryable / exhausted), and
+`SourceDBConnector._run_with_retry` (success, retry, non-retryable, exhausted,
+timeout, circuit-open rejection). 20 extra tests + fixed one.
+
+| Module | Before | After | Tests |
+| --- | --- | --- | --- |
+| `app/services/source_db_connector.py` | 83% | 91% | `tests/test_source_db_connector_extra.py` |
+
+Global local total after these additions: **85%** (1042 passed, 5 skipped).
+
 ### Note: measuring local coverage
 
 `pytest --cov` on the win32/py3.14 box aborts at conftest import with a `bcrypt`
@@ -248,7 +265,7 @@ measuring locally; CI is unaffected (py3.11 + its own tracer works).
 
 - `middleware/rate_limit.py` (77%), `routers/alerts.py` (47%)
 - `routers/auth.py` (~85%), `routers/compliance.py` (85%), `routers/analytics.py` (~79%)
-- `services/source_db_connector.py` (~83%), `services/credential_service.py` (78%)
+- `services/credential_service.py` (78%)
 - `services/external_compliance_pipeline.py` (77%, `_process_*` / `_log_run` internals remain)
 - `routers/credentials.py` (54%), `routers/webhooks.py` (58%)
 - Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py` (see above)
