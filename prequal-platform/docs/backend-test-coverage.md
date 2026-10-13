@@ -220,6 +220,22 @@ Data-at-rest / runtime-secrets infrastructure (deterministic, no network):
 
 Global local total after these additions: **84%** (984 passed, 5 skipped).
 
+### Added: `app/services/data_quality_monitoring.py`
+
+`tests/test_data_quality_monitoring_extra.py` (9 tests) covers `_parse_dt`
+coercion, the dialect-portable SQL fragment helpers (SQLite vs PostgreSQL
+branches of `_days_ago_date_expr` / `_age_comparison` /
+`_duration_seconds_expr` / `_ratio_round_expr`), `log_pipeline_performance`
+duration handling, `refresh_data_quality_views` (SQLite short-circuit +
+PostgreSQL concurrent->non-concurrent fallback), `run_daily_data_quality_check`
+orchestration, and `_persist_alert` swallowing a failing audit emission.
+
+| Module | Before | After | Tests |
+| --- | --- | --- | --- |
+| `app/services/data_quality_monitoring.py` | 85% | 93% | `tests/test_data_quality_monitoring_extra.py` |
+
+Global local total after these additions: **85%** (1016 passed, 5 skipped).
+
 ### Note: measuring local coverage
 
 `pytest --cov` on the win32/py3.14 box aborts at conftest import with a `bcrypt`
@@ -232,7 +248,7 @@ measuring locally; CI is unaffected (py3.11 + its own tracer works).
 
 - `middleware/rate_limit.py` (77%), `routers/alerts.py` (47%)
 - `routers/auth.py` (~85%), `routers/compliance.py` (85%), `routers/analytics.py` (~79%)
-- `services/data_quality_monitoring.py` (~85%), `services/source_db_connector.py` (~83%), `services/credential_service.py` (78%)
+- `services/source_db_connector.py` (~83%), `services/credential_service.py` (78%)
 - `services/external_compliance_pipeline.py` (77%, `_process_*` / `_log_run` internals remain)
 - `routers/credentials.py` (54%), `routers/webhooks.py` (58%)
 - Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py` (see above)
