@@ -121,7 +121,7 @@ jobs:
           output-file: sbom-prequal-platform.cyclonedx.json
 
       - name: Upload SBOMs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: '*.cyclonedx.json'

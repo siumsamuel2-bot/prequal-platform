@@ -72,7 +72,7 @@ jobs:
 
       - name: Upload runtime adapter alert artifacts if found
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: runtime-adapter-alerts
           path: artifacts/adapter-health/adapter-health-*.json
@@ -176,7 +176,7 @@ jobs:
           safety check --json > safety-report.json || true
 
       - name: Upload dependency reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: dependency-reports
@@ -285,7 +285,7 @@ jobs:
         run: npx jest --ci --coverage
 
       - name: Upload frontend coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: frontend-coverage-report
@@ -327,7 +327,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload coverage HTML report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-report
@@ -400,7 +400,7 @@ jobs:
           python -c "import xml.etree.ElementTree as ET, sys; root = ET.parse('pg-test-results.xml').getroot(); suites = root.findall('testsuite') or [root]; total = sum(int(s.get('tests', 0)) for s in suites); failures = sum(int(s.get('failures', 0)) for s in suites); errors = sum(int(s.get('errors', 0)) for s in suites); skipped = sum(int(s.get('skipped', 0)) for s in suites); print(f'PG suite: {total - failures - errors - skipped}/{total} passed, {failures} failures, {errors} errors, {skipped} skipped'); sys.exit(0)"
 
       - name: Upload PG test results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: pg-test-results
@@ -515,7 +515,7 @@ jobs:
           timeout 300 locust -f tests/locustfile.py --headless -u 100 -r 10 --run-time 180s --stop-timeout 10 || echo "Load test completed"
 
       - name: Upload performance results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: performance-results
@@ -817,7 +817,7 @@ jobs:
             }
 
       - name: Upload changelog artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: changelog
           path: changelog.md
