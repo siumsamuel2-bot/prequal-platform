@@ -320,7 +320,7 @@ jobs:
           python -m pytest tests/ -v --cov=app --cov=api --cov-report=xml --cov-report=html --cov-fail-under=78
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           file: ./prequal-platform/coverage.xml
           flags: backend
@@ -459,7 +459,7 @@ jobs:
           python -m pytest tests/test_analytics_pipeline.py -v --cov=app/services/analytics_pipeline --cov-report=xml
 
       - name: Upload integration test coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           file: ./coverage.xml
           flags: integration
