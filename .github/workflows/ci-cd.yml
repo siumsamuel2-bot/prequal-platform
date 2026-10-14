@@ -831,7 +831,7 @@ jobs:
     if: success()
     steps:
       - name: Send success notification to Slack
-        uses: slackapi/slack-github-action@v1.25.0
+        uses: slackapi/slack-github-action@v4.0.0
         with:
           payload: |
             {
@@ -856,7 +856,7 @@ jobs:
     if: failure()
     steps:
       - name: Send failure notification to Slack
-        uses: slackapi/slack-github-action@v1.25.0
+        uses: slackapi/slack-github-action@v4.0.0
         with:
           payload: |
             {
@@ -927,7 +927,7 @@ jobs:
           echo "✅ Rollback completed successfully"
 
       - name: Notify rollback to Slack
-        uses: slackapi/slack-github-action@v1.25.0
+        uses: slackapi/slack-github-action@v4.0.0
         with:
           payload: |
             {
