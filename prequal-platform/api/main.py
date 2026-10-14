@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.database import init_db, close_db, engine
+from app.environment import current_environment, is_dev_environment
 from app.routers import auth, compliance, alerts, credentials, analytics, webhooks, billing, state_compliance, audit, source_db, rate_limits, feedback
 from app.logging_config import setup_logging, get_logger
 from app.middleware.rate_limit import setup_rate_limiting
@@ -58,11 +59,22 @@ async def lifespan(app: FastAPI):
     logger.info("Database connection closed")
 
 
+# Interactive documentation is exposed only in developer environments
+# (MID-690): in staging/production the routes enumerate every privileged
+# endpoint (admin, source-db, pipeline, billing) and are a reconnaissance
+# gift. Render staging sets ENVIRONMENT=staging; local uvicorn runs have
+# no ENVIRONMENT set and keep docs.
+_docs_enabled = is_dev_environment()
+logger.info("Interactive docs %s (ENVIRONMENT=%s)", "enabled" if _docs_enabled else "disabled", current_environment())
+
 app = FastAPI(
     title="Prequal Compliance Platform API",
     description="API for tracking subcontractor compliance, certifications, and violations",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 # Add request logging middleware

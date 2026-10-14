@@ -74,9 +74,16 @@ def _assert_read_only(sql: str) -> None:
         )
 
 
-@router.get("/health", summary="Source-DB connector health")
-async def connector_health() -> Dict[str, Any]:
-    """Return connector reachability, retry policy and breaker state."""
+@router.get("/health", summary="Source-DB connector health (admin-only)")
+async def connector_health(
+    current_user: TokenData = Depends(require_admin),
+) -> Dict[str, Any]:
+    """Return connector reachability, retry policy and breaker state.
+
+    Admin-only since MID-690: the payload discloses retry/circuit-breaker
+    tuning and source-DB latency, which is reconnaissance material for
+    anonymous callers.
+    """
     report = await connector.test_connection()
     return {
         "status": "healthy" if report["connected"] else "unhealthy",

@@ -21,6 +21,11 @@ else:
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_test_db_path}"
 # Ensure the auth module can import during tests even without an ambient secret.
 os.environ.setdefault("SECRET_KEY", "test-secret-key-32-bytes-long-here")
+# Tests run in developer mode (MID-690): interactive docs / openapi.json stay
+# enabled so schemathesis can load the schema from /openapi.json, and the
+# /metrics endpoint keeps its open dev behaviour unless a test opts into the
+# token gate by monkeypatching ENVIRONMENT / METRICS_AUTH_TOKEN.
+os.environ.setdefault("ENVIRONMENT", "development")
 # Encryption key for PII migrations/services. Kept <32 chars on purpose: the
 # PBKDF2 branch is used (migration 016's key handling truncates >=32-char keys
 # to 32 bytes and feeds them to Fernet, which is invalid).

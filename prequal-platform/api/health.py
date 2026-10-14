@@ -10,12 +10,14 @@ Provides:
 
 import asyncio
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Dict, List, Optional
 import logging
 import time
+
+from app.routers.auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -121,15 +123,20 @@ async def readiness_probe():
 
 
 @router.get("/health/detailed")
-async def detailed_health():
+async def detailed_health(_: None = Depends(require_admin)):
     """
-    Detailed health check with all service statuses.
+    Detailed health check with all service statuses (admin-only, MID-690).
 
     Returns comprehensive health information including:
     - Application version
     - All dependency statuses
     - Process uptime
     - Python version
+
+    Requires an authenticated admin: the payload discloses dependency
+    status, uptime and the exact Python version, which is reconnaissance
+    material for anonymous callers. Uptime monitors should scrape the
+    public ``/health`` (or ``/health/ready``) instead.
     """
     import os
     import sys

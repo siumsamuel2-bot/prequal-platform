@@ -2,13 +2,29 @@
 Prometheus metrics instrumentation for Prequal Platform FastAPI application.
 
 Add to your FastAPI app to expose /metrics endpoint for Prometheus scraping.
+
+The /metrics endpoint is access-controlled (MID-690): process memory/CPU and
+request metrics are reconnaissance material. Outside developer environments
+(ENVIRONMENT in development/dev/local/test) the endpoint requires a bearer
+token in the ``Authorization`` header matching ``METRICS_AUTH_TOKEN``:
+
+    curl -H "Authorization: Bearer $METRICS_AUTH_TOKEN" https://host/metrics
+
+If ``METRICS_AUTH_TOKEN`` is not configured in a staging/production
+environment the endpoint fails closed with 403 (log a warning and set the
+token to re-enable authenticated scraping). Prometheus can scrape with the
+token via ``authorization`` ``credentials`` in the scrape config.
 """
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
+import hmac
+import os
 import time
 import logging
 from typing import Callable
+
+from app.environment import current_environment, is_dev_environment
 
 logger = logging.getLogger(__name__)
 
@@ -110,8 +126,25 @@ def setup_metrics(app: FastAPI):
     _METRICS_SETUP_DONE = True
 
     @app.get("/metrics")
-    async def metrics_endpoint():
-        """Prometheus metrics endpoint."""
+    async def metrics_endpoint(request: Request):
+        """Prometheus metrics endpoint (token-gated outside dev, MID-690)."""
+        token = os.getenv("METRICS_AUTH_TOKEN", "").strip()
+        if token:
+            supplied = request.headers.get("authorization", "")
+            if not hmac.compare_digest(supplied, f"Bearer {token}"):
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Metrics endpoint requires a valid METRICS_AUTH_TOKEN bearer token"},
+                )
+        elif not is_dev_environment():
+            logger.warning(
+                "Rejecting anonymous /metrics scrape in ENVIRONMENT=%s: set METRICS_AUTH_TOKEN to enable authenticated scraping",
+                current_environment(),
+            )
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Metrics endpoint is disabled in this environment (set METRICS_AUTH_TOKEN to enable)"},
+            )
         return PlainTextResponse(
             generate_latest(),
             media_type=CONTENT_TYPE_LATEST
