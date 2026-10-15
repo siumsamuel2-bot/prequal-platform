@@ -74,6 +74,17 @@ class FeedbackResponse(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class FeedbackListResponse(BaseModel):
+    """Envelope matching the frontend ``FeedbackListResponse`` contract.
+
+    ``X-Total-Count`` remains for back-compat, but the body carries both the
+    page of ``items`` and the unpaginated ``total``.
+    """
+
+    items: List[FeedbackResponse]
+    total: int
+
+
 def _serialize(row: FeedbackSubmission) -> FeedbackResponse:
     return FeedbackResponse(
         id=str(row.id),
@@ -165,7 +176,7 @@ async def submit_feedback(
     return _serialize(submission)
 
 
-@router.get("", response_model=List[FeedbackResponse])
+@router.get("", response_model=FeedbackListResponse)
 async def list_feedback(
     response: Response,
     skip: int = Query(0, ge=0),
@@ -196,7 +207,10 @@ async def list_feedback(
     rows = (await db.execute(query)).scalars().all()
 
     response.headers["X-Total-Count"] = str(total)
-    return [_serialize(row) for row in rows]
+    return FeedbackListResponse(
+        items=[_serialize(row) for row in rows],
+        total=total,
+    )
 
 
 @router.patch("/{feedback_id}", response_model=FeedbackResponse)

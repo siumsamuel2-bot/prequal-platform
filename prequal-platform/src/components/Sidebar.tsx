@@ -1,9 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
-import { logout } from '../utils/auth';
+import { isAdmin, logout } from '../utils/auth';
 import './Sidebar.css';
 
 const Sidebar = () => {
   const location = useLocation();
+  const isAdminUser = isAdmin();
 
   const isActive = (path: string) => location.pathname === path;
   const isAnalyticsActive = () => location.pathname.startsWith('/analytics');
@@ -72,6 +73,14 @@ const Sidebar = () => {
         >
           Settings
         </Link>
+        {isAdminUser && (
+          <Link
+            to="/admin/feedback"
+            className={`sidebar-link ${isActive('/admin/feedback') ? 'active' : ''}`}
+          >
+            Feedback Review
+          </Link>
+        )}
       </nav>
       <div className="sidebar-footer">
         <button onClick={handleLogout} className="sidebar-logout">Logout</button>

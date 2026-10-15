@@ -218,10 +218,60 @@ async def test_get_is_org_scoped(async_client: AsyncClient, two_orgs) -> None:
         fastapi_app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200, response.text
-    ids = {row["id"] for row in response.json()}
+    body = response.json()
+    ids = {row["id"] for row in body["items"]}
     assert str(two_orgs["sub_a"]) in ids
     assert str(two_orgs["sub_b"]) not in ids
+    assert body["total"] == 1
     assert response.headers.get("X-Total-Count") == "1"
+
+
+@pytest.mark.asyncio
+async def test_get_returns_items_total_envelope(async_client: AsyncClient, two_orgs) -> None:
+    """GET /feedback must mirror the frontend ``{items, total}`` contract.
+
+    Regression for MID-696: a bare array body made ``response.items`` undefined
+    in the admin review view, so submissions never rendered.
+    """
+    fastapi_app.dependency_overrides[get_current_user] = _as(two_orgs["owner_a"])
+    try:
+        response = await async_client.get(PREFIX)
+    finally:
+        fastapi_app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert isinstance(body, dict)
+    assert set(body) >= {"items", "total"}
+    assert isinstance(body["items"], list)
+    assert isinstance(body["total"], int)
+
+
+@pytest.mark.asyncio
+async def test_get_total_counts_beyond_page(async_client: AsyncClient, db_session) -> None:
+    """``total`` is the unpaginated count; ``items`` is the requested page."""
+    org = uuid.uuid4()
+    db_session.add(Organization(id=org, name="P", slug=f"p-{org.hex[:8]}"))
+    await db_session.flush()
+    owner = await _make_user(db_session, org)
+    db_session.add(OrganizationMembership(user_id=owner.id, org_id=org, role="owner"))
+    db_session.add_all([
+        FeedbackSubmission(org_id=org, user_id=owner.id, type="comment",
+                           surface="dash", message=f"m{i}", status="new")
+        for i in range(3)
+    ])
+    await db_session.commit()
+
+    fastapi_app.dependency_overrides[get_current_user] = _as(owner.id)
+    try:
+        response = await async_client.get(PREFIX, params={"limit": 1})
+    finally:
+        fastapi_app.dependency_overrides.pop(get_current_user, None)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert len(body["items"]) == 1
+    assert body["total"] == 3
 
 
 @pytest.mark.asyncio
@@ -233,7 +283,7 @@ async def test_get_other_org_owner_sees_only_own(async_client: AsyncClient, two_
         fastapi_app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200, response.text
-    ids = {row["id"] for row in response.json()}
+    ids = {row["id"] for row in response.json()["items"]}
     assert str(two_orgs["sub_b"]) in ids
     assert str(two_orgs["sub_a"]) not in ids
 
@@ -297,7 +347,7 @@ async def test_admin_is_unscoped(async_client: AsyncClient, two_orgs, db_session
         fastapi_app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200, response.text
-    ids = {row["id"] for row in response.json()}
+    ids = {row["id"] for row in response.json()["items"]}
     assert str(two_orgs["sub_a"]) in ids
     assert str(two_orgs["sub_b"]) in ids
 
@@ -393,7 +443,7 @@ async def test_filters_by_type(async_client: AsyncClient, db_session) -> None:
         fastapi_app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200, response.text
-    rows = response.json()
+    rows = response.json()["items"]
     assert len(rows) == 1
     assert rows[0]["type"] == "rating"
 

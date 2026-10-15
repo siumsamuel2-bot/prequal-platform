@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { apiClient } from '../api/client';
+import { feedbackApi } from '../api/client';
 import { useToast } from './ToastContext';
 import { useAnalytics } from '../hooks/useAnalytics';
 import './FeedbackModal.css';
@@ -42,13 +42,16 @@ export const FeedbackModal = ({ isOpen, onClose }: FeedbackModalProps) => {
 
     setIsSubmitting(true);
     try {
-      await apiClient.post('/feedback', {
-        feedback_type: feedbackType,
-        rating: rating,
-        subject: subject || undefined,
-        body: body.trim(),
+      // The deployed app only exposes the /api/v1/feedback router; the legacy
+      // /api/feedback path 404s (MID-696). Map the modal onto that contract.
+      await feedbackApi.submit({
+        type: feedbackType === 'rating' ? 'rating' : feedbackType === 'bug_report' ? 'support' : 'comment',
+        surface: 'feedback_modal',
+        page_url: window.location.pathname,
+        ...(rating ? { rating } : {}),
+        message: subject.trim() ? `${subject.trim()}\n\n${body.trim()}` : body.trim(),
       });
-      
+
       trackFeedback(feedbackType, rating || undefined);
       toast.success('Thank you for your feedback!');
       handleClose();
