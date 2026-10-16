@@ -789,10 +789,14 @@ jobs:
           echo "Check CloudWatch logs for details"
 
   # Generate changelog on tagged releases
+  # Also syncs Keep-a-Changelog notes into prequal-platform/CHANGELOG.md via
+  # scripts/release_notes.py and commits the update back to develop ([skip ci]).
   generate-changelog:
     needs: deploy-production
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -803,6 +807,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          write_to_file: true
+          output: changelog.md
           configuration: |
             {
               "categories": [
@@ -815,6 +821,33 @@ jobs:
               "owner": "${{ github.repository_owner }}",
               "repo": "${{ github.event.repository.name }}"
             }
+
+      - name: Sync release notes into CHANGELOG.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/release_notes.py \
+            --tag "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --prepend prequal-platform/CHANGELOG.md
+
+      - name: Commit CHANGELOG.md update to develop
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          git config user.name "release-notes-bot"
+          git config user.email "release-notes-bot@users.noreply.github.com"
+          git fetch origin develop
+          git stash push -m "release-notes" -- prequal-platform/CHANGELOG.md
+          git checkout -B release-notes-sync origin/develop
+          git stash pop
+          git add prequal-platform/CHANGELOG.md
+          if git diff --cached --quiet; then
+            echo "CHANGELOG.md unchanged; nothing to commit"
+          else
+            git commit -m "docs(changelog): release $RELEASE_TAG notes [skip ci]"
+            git push origin HEAD:develop
+          fi
 
       - name: Upload changelog artifact
         uses: actions/upload-artifact@v4
