@@ -262,12 +262,32 @@ default (C) coverage tracer is used. Setting `COVERAGE_CORE=sysmon` makes
 `--cov` work again (Python 3.12+ sys.monitoring tracer). Use that env var when
 measuring locally; CI is unaffected (py3.11 + its own tracer works).
 
+### Batch: transport, state-compliance, billing services + rate-limit admin API
+
+| Module | Before | After | Tests |
+| --- | --- | --- | --- |
+| `app/services/notification_service.py` | 51% | 100% | `tests/test_notification_service_extra.py` |
+| `app/services/state_compliance_service.py` | 43% | 96% | `tests/test_state_compliance_service_extra.py` |
+| `app/services/billing_service.py` | 51% | 100% | `tests/test_billing_service_extra.py` |
+| `app/routers/rate_limits.py` | 61% | 100% | `tests/test_rate_limits_admin_extra.py` |
+
+- `notification_service`: SendGrid/Twilio branches (configured + unconfigured +
+  error) via injected fake SDK modules; `send_notification` routing and the
+  welcome/setup/first-alert templated senders.
+- `state_compliance_service`: active-source ordering/filter, single- and
+  cross-state lookups, pipeline delegation, and the multi-state orchestrator
+  including per-state failure isolation.
+- `billing_service`: every Stripe-backed helper through a fake `stripe` module
+  (success + `StripeError`) plus the plan/price mapping helpers.
+- `rate_limits` router: admin CRUD for tiers/rules/blocked + resolve/stats/
+  reset-metrics through the ASGI client.
+
+Global local total after these additions: **87%** (1103 passed, 5 skipped).
+
 ### Remaining largest gaps (final target `--cov-fail-under=80`)
 
-- `middleware/rate_limit.py` (77%), `routers/alerts.py` (47%)
-- `routers/auth.py` (~85%), `routers/compliance.py` (85%), `routers/analytics.py` (~79%)
-- `services/credential_service.py` (78%)
-- `services/external_compliance_pipeline.py` (77%, `_process_*` / `_log_run` internals remain)
-- `routers/credentials.py` (54%), `routers/webhooks.py` (58%)
-- Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py` (see above)
-- `app/services/encryption_service.py` now 100%, `secrets_manager.py` 97% (done).
+- `middleware/rate_limit.py` (77%, 116 miss), `services/external_compliance_pipeline.py` (77%, 118 miss)
+- `routers/compliance.py` (85%), `routers/auth.py` (85%), `routers/analytics.py` (79%)
+- `routers/credentials.py` (54%), `routers/webhooks.py` (58%), `services/credential_service.py` (78%)
+- Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py`
+
