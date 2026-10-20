@@ -36,6 +36,7 @@ Ratchet history (floor only ever moves **upward**):
 | `cf77182` | `74` -> `76` | Alerts router + alert delivery/summary tests. CI measured **76.41%** on `develop` (936 passed, 5 skipped), so the floor is set to the highest integer at/below it. |
 | `56cab27` | `76` -> `77` | Analytics-pipeline + encryption/secrets tests. CI measured **77.52%** on `develop` (993 passed, 5 skipped). |
 | `c9d931a` | `77` -> `78` | data_quality_monitoring + source_db_connector tests. CI measured **78.26%** on `develop` (1042 passed, 5 skipped). |
+| `b6dc61b` | `78` -> `80` | notification/state-compliance/billing services + rate-limit admin API tests (local 87%, 1103 passed, 5 skipped). Final target reached: the `test` job is green at `--cov-fail-under=80`. |
 
 ## Local vs CI discrepancy (~5pp at `d907ddf`, open)
 
