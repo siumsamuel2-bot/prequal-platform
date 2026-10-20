@@ -292,3 +292,33 @@ Global local total after these additions: **87%** (1103 passed, 5 skipped).
 - `routers/credentials.py` (54%), `routers/webhooks.py` (58%), `services/credential_service.py` (78%)
 - Unimported duplicate models: `email_template.py`, `notification_delivery_log.py`, `notification_preferences.py`
 
+### Final state: `--cov-fail-under=80`
+
+The floor reached its final target in `b6dc61b`..`846be7a`: the `test` job is
+**green** at `--cov-fail-under=80` on `develop@846be7a` (CI/CD Pipeline run
+[39515430017](https://github.com/siumsamuel2-bot/prequal-platform/actions/runs/39515430017)).
+Local total at `b6dc61b` is 87% (8802 statements); CI has run ~7pp below local
+throughout this task, so the 80% target was reached on CI headroom of roughly
+one point. The suite is green in CI (1103 passed, 5 skipped).
+
+### Not caused by this task: `test-postgres` flakiness
+
+The `test-postgres` (PG-parity) job has been intermittently red independently of
+the coverage work. Evidence from `check-runs` on consecutive `develop` commits
+(the test *code* is unchanged across the pairs):
+
+| Commit | Change | `test-postgres` |
+| --- | --- | --- |
+| `b2da8c3` | billing tests | success |
+| `d907ddf` | compliance tests | success |
+| `6b5018d` | floor bump only (ci) | success |
+| `8d130e3` | floor bump only (ci) | **failure** |
+| `56cab27` | encryption/secrets tests | failure |
+| `1306383` | pre-MID-676 | failure |
+
+`6b5018d` -> `8d130e3` changes only `.github/workflows/ci-cd.yml` +
+this doc, yet the PG job flips success -> failure, so the failure is flaky (or
+infra/ordering) rather than a deterministic regression from the new tests.
+This task did not regress it; stabilising `test-postgres` is tracked
+separately.
+
