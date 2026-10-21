@@ -343,15 +343,12 @@ jobs:
   # REFRESH MATERIALIZED VIEW CONCURRENTLY) is untested under SQLite.
   # TEST_DATABASE_URL switches tests/conftest.py into Postgres parity mode
   # (real Alembic migrations instead of SQLite shims).
-  # Advisory until PG parity is reached: failures are visible here and in the
-  # artifact summary but do not block builds. Remove continue-on-error once
-  # the suite is green against PostgreSQL.
+  # Blocking since MID-726: the suite is green against PostgreSQL (1105/1108,
+  # 0 failures), so parity failures now fail the build as intended.
   test-postgres:
     # Decoupled from lint/secret gates (MID-640): PG parity runs on every push/PR.
-    # Advisory (continue-on-error) until the suite is green against PostgreSQL.
     needs: [dependency-check]
     runs-on: ubuntu-latest
-    continue-on-error: true
     services:
       postgres:
         image: postgis/postgis:15-3.4
