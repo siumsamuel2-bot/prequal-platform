@@ -4,8 +4,8 @@ from typing import Optional
 from typing import List
 from typing import TYPE_CHECKING
 from sqlalchemy import (
-    String, Text, Date, DateTime, Boolean, Numeric, Integer, 
-    ForeignKey, UniqueConstraint, Index, ARRAY
+    String, Text, Date, DateTime, Boolean, Numeric, Integer,
+    ForeignKey, UniqueConstraint, Index, ARRAY, JSON as SA_JSON
 )
 from sqlalchemy.dialects.postgresql import UUID, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -223,9 +223,17 @@ class AlertPreference(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    certification_types: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    # Migration 001 created these columns as TEXT[] on PostgreSQL, so the model
+    # must bind arrays (not json) or every INSERT fails with "column is of type
+    # text[] but expression is of type json" (MID-726). JSON on SQLite keeps
+    # the SQLite test job's create_all/bind path unchanged.
+    certification_types: Mapped[Optional[List[str]]] = mapped_column(
+        ARRAY(String).with_variant(SA_JSON(), "sqlite"), nullable=True
+    )
     advance_notice_days: Mapped[int] = mapped_column(Integer, default=30)
-    alert_methods: Mapped[List[str]] = mapped_column(JSON, default=["email"])
+    alert_methods: Mapped[List[str]] = mapped_column(
+        ARRAY(String).with_variant(SA_JSON(), "sqlite"), default=["email"]
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
