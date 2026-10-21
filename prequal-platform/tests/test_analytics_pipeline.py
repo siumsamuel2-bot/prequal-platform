@@ -10,6 +10,10 @@ Owner: Data Engineer
 """
 from __future__ import annotations
 
+import datetime as _dt
+import uuid as _uuid
+from unittest.mock import MagicMock
+
 import pytest
 from datetime import datetime
 from typing import Any
@@ -18,12 +22,23 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.analytics_pipeline import (
+    _days_ago_expr,
+    _refresh_view,
+    _safe_rate,
+    _team_filter_value,
+    _to_iso,
+    get_all_project_compliance,
+    get_certification_export_count,
+    get_certification_export_rows,
     get_compliance_summary,
     get_compliance_trends,
-    get_certification_export_rows,
-    get_recent_alerts,
+    get_feature_adoption_summary,
+    get_feature_adoption_summary_count,
     get_project_compliance_by_id,
-    get_all_project_compliance,
+    get_recent_alerts,
+    get_recent_alerts_count,
+    get_system_health_summary,
+    refresh_all_analytics_views,
 )
 
 
@@ -375,3 +390,370 @@ class TestSystemHealth:
             ]
             for field in required:
                 assert field in first, f"Missing field: {field}"
+
+
+# ---------------------------------------------------------------------------
+# Helper function tests (pure logic, no DB required)
+# ---------------------------------------------------------------------------
+
+class TestToIso:
+    """Test ``_to_iso`` datetime/date/string conversion."""
+
+    def test_none_returns_none(self):
+        assert _to_iso(None) is None
+
+    def test_string_passthrough(self):
+        assert _to_iso("2024-03-15T10:30:00") == "2024-03-15T10:30:00"
+
+    def test_datetime_converted(self):
+        dt = datetime(2024, 3, 15, 10, 30, 0)
+        assert _to_iso(dt) == "2024-03-15T10:30:00"
+
+    def test_date_converted(self):
+        d = _dt.date(2024, 3, 15)
+        assert _to_iso(d) == "2024-03-15"
+
+    def test_fallback_str(self):
+        assert _to_iso(12345) == "12345"
+
+
+class TestSafeRate:
+    """Test ``_safe_rate`` percentage calculation with edge cases."""
+
+    def test_normal_rate(self):
+        assert _safe_rate(3, 4) == 75.0
+
+    def test_zero_denominator_returns_zero(self):
+        assert _safe_rate(5, 0) == 0.0
+
+    def test_none_denominator_returns_zero(self):
+        assert _safe_rate(5, None) == 0.0
+
+    def test_zero_numerator(self):
+        assert _safe_rate(0, 10) == 0.0
+
+    def test_full_rate(self):
+        assert _safe_rate(10, 10) == 100.0
+
+
+class TestTeamFilterValue:
+    """Test ``_team_filter_value`` dialect-normalised team id binding."""
+
+    def _sqlite_db(self):
+        db = MagicMock(spec=AsyncSession)
+        db.get_bind.return_value.dialect.name = "sqlite"
+        return db
+
+    def test_uuid_team_id_sqlite_returns_hex(self):
+        tid = _uuid.UUID("00112233-4455-6677-8899-aabbccddeeff")
+        db = self._sqlite_db()
+        assert _team_filter_value(db, tid) == "00112233445566778899aabbccddeeff"
+
+    def test_string_team_id_sqlite_returns_hex(self):
+        db = self._sqlite_db()
+        assert _team_filter_value(db, "00112233445566778899aabbccddeeff") == "00112233445566778899aabbccddeeff"
+
+    def test_non_sqlite_passthrough(self):
+        tid = _uuid.UUID("00112233-4455-6677-8899-aabbccddeeff")
+        db = MagicMock(spec=AsyncSession)
+        db.get_bind.return_value.dialect.name = "postgresql"
+        assert _team_filter_value(db, tid) == tid
+
+
+class TestDaysAgoExpr:
+    """Test ``_days_ago_expr`` dialect-specific SQL generation."""
+
+    def _sqlite_db(self):
+        db = MagicMock(spec=AsyncSession)
+        db.get_bind.return_value.dialect.name = "sqlite"
+        return db
+
+    def test_sqlite_uses_date_expr(self):
+        db = self._sqlite_db()
+        expr = _days_ago_expr(db)
+        assert expr == "date('now', '-' || :days || ' days')"
+
+    def test_postgres_uses_current_date(self):
+        db = MagicMock(spec=AsyncSession)
+        db.get_bind.return_value.dialect.name = "postgresql"
+        expr = _days_ago_expr(db)
+        assert expr == "(CURRENT_DATE - CAST(:days AS integer))"
+
+    def test_dialect_detection_failure_returns_postgres_expr(self):
+        """Dialect detection failure falls back to PostgreSQL expression."""
+        db = MagicMock(spec=AsyncSession)
+        db.get_bind.side_effect = RuntimeError("no bind")
+        expr = _days_ago_expr(db)
+        assert expr == "(CURRENT_DATE - CAST(:days AS integer))"
+
+
+class TestTeamFilterValueDialectFailure:
+    """Test ``_team_filter_value`` dialect-detection failure path."""
+
+    def test_dialect_detection_failure_returns_uuid(self):
+        """When dialect detection fails, return the UUID as-is (postgres path)."""
+        tid = _uuid.UUID("00112233-4455-6677-8899-aabbccddeeff")
+        db = MagicMock(spec=AsyncSession)
+        db.get_bind.side_effect = RuntimeError("no bind")
+        assert _team_filter_value(db, tid) == tid
+
+
+class TestComplianceSummaryEdgeCases:
+    """Edge cases for compliance summary aggregation."""
+
+    @pytest.mark.asyncio
+    async def test_empty_row_returns_empty_dict(self, db_session: AsyncSession) -> None:
+        """When mv_compliance_summary has no rows, return {}."""
+        from unittest.mock import MagicMock as _MM
+        result = _MM()
+        result.mappings.return_value.first.return_value = None
+        orig_execute = db_session.execute
+        async def _fake_execute(*args, **kwargs):
+            return result
+        db_session.execute = _fake_execute
+        try:
+            data = await get_compliance_summary(db_session)
+            assert data == {}
+        finally:
+            db_session.execute = orig_execute
+
+
+class TestRefreshViews:
+    """Tests for materialized view refresh helpers.
+
+    SQLite does not support REFRESH MATERIALIZED VIEW, so these tests mock
+    the db session's execute to verify the correct SQL is issued.
+    """
+
+    def test_refresh_view_concurrently_issues_correct_sql(self):
+        from unittest.mock import MagicMock as _MM
+        db = _MM(spec=AsyncSession)
+        import asyncio
+        asyncio.run(_refresh_view(db, "mv_compliance_summary", concurrently=True))
+        called = db.execute.call_args[0][0]
+        assert "REFRESH MATERIALIZED VIEW CONCURRENTLY mv_compliance_summary" in str(called)
+
+    def test_refresh_view_non_concurrently_issues_correct_sql(self):
+        from unittest.mock import MagicMock as _MM
+        db = _MM(spec=AsyncSession)
+        import asyncio
+        asyncio.run(_refresh_view(db, "mv_compliance_summary", concurrently=False))
+        called = db.execute.call_args[0][0]
+        assert "REFRESH MATERIALIZED VIEW mv_compliance_summary" in str(called)
+        assert "CONCURRENTLY" not in str(called)
+
+    def test_refresh_all_analytics_views_issues_correct_sql(self):
+        from unittest.mock import MagicMock as _MM
+        db = _MM(spec=AsyncSession)
+        import asyncio
+        asyncio.run(refresh_all_analytics_views(db, concurrently=False))
+        calls = [str(c[0][0]) for c in db.execute.call_args_list]
+        expected = [
+            "mv_compliance_summary",
+            "mv_compliance_trends",
+            "mv_certification_status",
+            "mv_project_compliance",
+            "mv_recent_alerts",
+        ]
+        for view in expected:
+            assert any(view in c for c in calls), f"Missing refresh for {view}"
+
+
+class TestCountFunctions:
+    """Tests for count/pagination helper functions."""
+
+    @pytest.mark.asyncio
+    async def test_certification_export_count(self, db_session: AsyncSession) -> None:
+        count = await get_certification_export_count(db_session)
+        assert isinstance(count, int)
+        assert count >= 0
+
+    @pytest.mark.asyncio
+    async def test_certification_export_count_with_filters(self, db_session: AsyncSession) -> None:
+        count = await get_certification_export_count(
+            db_session, expiration_bucket="valid", subcontractor_id="00000000000000000000000000000001"
+        )
+        assert isinstance(count, int)
+        assert count >= 0
+
+    @pytest.mark.asyncio
+    async def test_recent_alerts_count(self, db_session: AsyncSession) -> None:
+        count = await get_recent_alerts_count(db_session)
+        assert isinstance(count, int)
+        assert count >= 0
+
+    @pytest.mark.asyncio
+    async def test_recent_alerts_count_with_status(self, db_session: AsyncSession) -> None:
+        count = await get_recent_alerts_count(db_session, status="sent")
+        assert isinstance(count, int)
+        assert count >= 0
+
+    @pytest.mark.asyncio
+    async def test_feature_adoption_summary_count(self, db_session: AsyncSession) -> None:
+        count = await get_feature_adoption_summary_count(db_session)
+        assert isinstance(count, int)
+        assert count >= 0
+
+    @pytest.mark.asyncio
+    async def test_feature_adoption_summary_count_with_feature(self, db_session: AsyncSession) -> None:
+        count = await get_feature_adoption_summary_count(db_session, feature_name="feature_a")
+        assert isinstance(count, int)
+        assert count >= 0
+
+
+class TestCertificationExportFilters:
+    """Test optional filter parameters on certification export (covers lines 190-194)."""
+
+    @pytest.mark.asyncio
+    async def test_with_expiration_bucket(self, db_session: AsyncSession) -> None:
+        data = await get_certification_export_rows(db_session, limit=10, expiration_bucket="valid")
+        assert isinstance(data, list)
+
+    @pytest.mark.asyncio
+    async def test_with_subcontractor_id(self, db_session: AsyncSession) -> None:
+        data = await get_certification_export_rows(
+            db_session, limit=10, subcontractor_id="00000000000000000000000000000001"
+        )
+        assert isinstance(data, list)
+
+
+class TestRecentAlertsFilters:
+    """Test optional status filter on recent alerts (covers lines 309-310)."""
+
+    @pytest.mark.asyncio
+    async def test_with_status(self, db_session: AsyncSession) -> None:
+        data = await get_recent_alerts(db_session, limit=10, status="sent")
+        assert isinstance(data, list)
+
+
+class TestFilteredQueries:
+    """Tests for team_id / feature_name / service_name filter paths in analytics_pipeline."""
+
+    @pytest.mark.asyncio
+    async def test_certification_export_rows_with_team_id(self, db_session: AsyncSession) -> None:
+        data = await get_certification_export_rows(db_session, limit=10, team_id="00000000000000000000000000000001")
+        assert isinstance(data, list)
+
+    @pytest.mark.asyncio
+    async def test_certification_export_count_with_team_id(self, db_session: AsyncSession) -> None:
+        count = await get_certification_export_count(db_session, team_id="00000000000000000000000000000001")
+        assert isinstance(count, int)
+        assert count >= 0
+
+    @pytest.mark.asyncio
+    async def test_recent_alerts_with_team_id(self, db_session: AsyncSession) -> None:
+        data = await get_recent_alerts(db_session, limit=10, team_id="00000000000000000000000000000001")
+        assert isinstance(data, list)
+
+    @pytest.mark.asyncio
+    async def test_all_projects_with_team_id(self, db_session: AsyncSession) -> None:
+        data = await get_all_project_compliance(db_session, limit=10, team_id="00000000000000000000000000000001")
+        assert isinstance(data, list)
+
+    @pytest.mark.asyncio
+    async def test_feature_adoption_with_feature_name(self, db_session: AsyncSession) -> None:
+        data = await get_feature_adoption_summary(db_session, limit=10, feature_name="feature_a")
+        assert isinstance(data, list)
+
+    @pytest.mark.asyncio
+    async def test_system_health_with_filters(self, db_session: AsyncSession) -> None:
+        data = await get_system_health_summary(db_session, service_name="service_1", metric_name="metric_a")
+        assert isinstance(data, list)
+
+
+class TestComplianceTrendsWithData:
+    """Test get_compliance_trends loop body when trend rows exist (covers line 153)."""
+
+    @pytest.mark.asyncio
+    async def test_trends_append_when_rows_exist(self, db_session: AsyncSession) -> None:
+        from unittest.mock import MagicMock as _MM
+        result = _MM()
+        row = _MM()
+        row.__getitem__.side_effect = lambda k: {
+            "trend_date": "2024-01-01", "active_subcontractors": 5, "valid_certifications": 3,
+            "expired_certifications": 1, "open_violations": 0, "open_osha_violations": 0,
+            "compliance_percentage": 60.0, "computed_at": "2024-01-01T00:00:00",
+        }[k]
+        result.mappings.return_value.all.return_value = [row]
+        orig_execute = db_session.execute
+        async def _fake_execute(*args, **kwargs):
+            return result
+        db_session.execute = _fake_execute
+        try:
+            data = await get_compliance_trends(db_session, days=30)
+            assert isinstance(data, list)
+            assert len(data) == 1
+        finally:
+            db_session.execute = orig_execute
+
+
+class TestProjectComplianceWithData:
+    """Test project compliance happy paths when rows exist (covers lines 421-423, 476-478)."""
+
+    @pytest.mark.asyncio
+    async def test_get_project_compliance_by_id_found(self, db_session: AsyncSession) -> None:
+        from unittest.mock import MagicMock as _MM
+        result = _MM()
+        row = _MM()
+        row.__getitem__.side_effect = lambda k: {
+            "project_id": "00000000-0000-0000-0000-000000000001",
+            "project_name": "Test Project",
+            "project_number": "TP-001",
+            "project_status": "active",
+            "start_date": "2024-01-01",
+            "estimated_end_date": "2024-12-31",
+            "total_subcontractors": 3,
+            "active_subcontractors": 2,
+            "suspended_subcontractors": 0,
+            "compliant_subcontractors": 2,
+            "open_violations": 0,
+            "open_osha_violations": 0,
+            "total_open_penalties": 0,
+            "expiring_soon_subcontractors": 0,
+            "computed_at": "2024-01-01T00:00:00",
+        }[k]
+        result.mappings.return_value.first.return_value = row
+        orig_execute = db_session.execute
+        async def _fake_execute(*args, **kwargs):
+            return result
+        db_session.execute = _fake_execute
+        try:
+            data = await get_project_compliance_by_id(db_session, "00000000-0000-0000-0000-000000000001")
+            assert data is not None
+            assert data["project_name"] == "Test Project"
+        finally:
+            db_session.execute = orig_execute
+
+    @pytest.mark.asyncio
+    async def test_get_all_project_compliance_loop_body(self, db_session: AsyncSession) -> None:
+        from unittest.mock import MagicMock as _MM
+        result = _MM()
+        row = _MM()
+        row.__getitem__.side_effect = lambda k: {
+            "project_id": "00000000-0000-0000-0000-000000000001",
+            "project_name": "Test Project",
+            "project_number": "TP-001",
+            "project_status": "active",
+            "start_date": "2024-01-01",
+            "estimated_end_date": "2024-12-31",
+            "total_subcontractors": 3,
+            "active_subcontractors": 2,
+            "suspended_subcontractors": 0,
+            "compliant_subcontractors": 2,
+            "open_violations": 0,
+            "open_osha_violations": 0,
+            "total_open_penalties": 0,
+            "expiring_soon_subcontractors": 0,
+            "computed_at": "2024-01-01T00:00:00",
+        }[k]
+        result.mappings.return_value.all.return_value = [row]
+        orig_execute = db_session.execute
+        async def _fake_execute(*args, **kwargs):
+            return result
+        db_session.execute = _fake_execute
+        try:
+            data = await get_all_project_compliance(db_session, limit=10)
+            assert isinstance(data, list)
+            assert len(data) == 1
+        finally:
+            db_session.execute = orig_execute

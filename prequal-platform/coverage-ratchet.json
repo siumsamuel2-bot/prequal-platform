@@ -1,0 +1,10 @@
+{
+  "backend": {
+    "min_pct": 80.0,
+    "note": "Ratchet baseline (MID-727). Raised from 79.0 to 80.0 as ninth/final incremental step toward 80% target (MID-676). Measured 70.77% on develop (MID-676, run 38014917054). Never lower without a reviewed PR."
+  },
+  "frontend": {
+    "min_pct": 0,
+    "note": "Advisory until first CI measurement. The ratchet run prints the suggested value to set here."
+  }
+}
