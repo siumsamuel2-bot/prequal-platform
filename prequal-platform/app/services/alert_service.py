@@ -264,9 +264,20 @@ async def _get_users_to_notify_for_subcontractor(
                 )
             )
         )
-        .distinct()
     )
-    return list(result.all())
+    # Deduplicate in Python instead of SQL SELECT DISTINCT: the joined
+    # NotificationPreferences entity carries a JSON column and PostgreSQL has
+    # no equality operator for type `json`, so DISTINCT over the mapped entity
+    # fails on PG (MID-726). SQLite tolerates it, which is why this only
+    # surfaced in the PG-parity CI job.
+    deduped: list[tuple[User, NotificationPreferences]] = []
+    seen_users: set[uuid.UUID] = set()
+    for user, prefs in result.all():
+        if user.id in seen_users:
+            continue
+        seen_users.add(user.id)
+        deduped.append((user, prefs))
+    return deduped
 
 
 async def _send_alert_to_user(

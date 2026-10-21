@@ -292,7 +292,10 @@ class TestNotificationPreferences:
 
     @pytest.mark.asyncio
     async def test_put_creates_then_updates(self, async_client, auth_override, db_engine):
-        auth_override(role="admin")
+        # Use the conftest sentinel admin identity (00000000-...-0001, backed by
+        # a real users row in PG mode): notification_preferences.user_id has a
+        # real FK to users and PG enforces it, unlike SQLite (MID-726).
+        auth_override(role="admin", user_id="00000000-0000-0000-0000-000000000001")
         created = await async_client.put(
             "/api/alerts/notification-preferences",
             json={"email_enabled": False, "sms_enabled": True, "max_emails_per_day": 5},
