@@ -1,4 +1,4 @@
-import React, { useId } from 'react';
+import React, { useId, useState } from 'react';
 
 interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> {
   label?: string;
@@ -10,9 +10,9 @@ interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, '
 }
 
 const sizeStyles = {
-  sm: { padding: '6px 10px', fontSize: '12px' },
-  md: { padding: '10px 12px', fontSize: '14px' },
-  lg: { padding: '12px 14px', fontSize: '16px' },
+  sm: { padding: '6px 10px', fontSize: 'var(--text-xs)' },
+  md: { padding: '10px 12px', fontSize: 'var(--text-sm)' },
+  lg: { padding: '12px 14px', fontSize: 'var(--text-base)' },
 };
 
 export const Input: React.FC<InputProps> = ({
@@ -24,23 +24,26 @@ export const Input: React.FC<InputProps> = ({
   inputSize = 'md',
   id,
   style,
+  onFocus,
+  onBlur,
   ...props
 }) => {
   const generatedId = useId();
   const inputId = id || generatedId;
   const hasError = !!error;
+  const [focused, setFocused] = useState(false);
 
   const containerStyle: React.CSSProperties = {
     display: 'flex',
     flexDirection: 'column',
-    gap: '4px',
+    gap: 'var(--space-1)',
     width: '100%',
   };
 
   const labelStyle: React.CSSProperties = {
-    fontSize: '14px',
-    fontWeight: 500,
-    color: hasError ? '#ef4444' : '#374151',
+    fontSize: 'var(--text-sm)',
+    fontWeight: 'var(--weight-medium)',
+    color: hasError ? 'var(--color-danger)' : 'var(--color-text)',
   };
 
   const inputWrapperStyle: React.CSSProperties = {
@@ -49,14 +52,21 @@ export const Input: React.FC<InputProps> = ({
     alignItems: 'center',
   };
 
+  const borderColor = hasError
+    ? 'var(--color-danger)'
+    : focused
+      ? 'var(--color-primary)'
+      : 'var(--color-border-strong)';
+
   const inputStyle: React.CSSProperties = {
     width: '100%',
-    border: `1px solid ${hasError ? '#ef4444' : props.disabled ? '#d1d5db' : '#d1d5db'}`,
-    borderRadius: '6px',
+    border: `1px solid ${borderColor}`,
+    borderRadius: 'var(--radius-md)',
     outline: 'none',
-    transition: 'border-color 0.2s, box-shadow 0.2s',
-    backgroundColor: props.disabled ? '#f9fafb' : '#ffffff',
-    color: '#374151',
+    transition: 'border-color var(--transition-fast), box-shadow var(--transition-fast)',
+    boxShadow: focused ? 'var(--focus-ring)' : 'none',
+    backgroundColor: props.disabled ? 'var(--color-bg)' : 'var(--color-surface)',
+    color: 'var(--color-text)',
     ...sizeStyles[inputSize],
     ...(leftIcon && { paddingLeft: '36px' }),
     ...(rightIcon && { paddingRight: '36px' }),
@@ -76,7 +86,7 @@ export const Input: React.FC<InputProps> = ({
             style={{
               position: 'absolute',
               left: '10px',
-              color: '#9ca3af',
+              color: 'var(--color-text-subtle)',
               display: 'flex',
               pointerEvents: 'none',
             }}
@@ -89,6 +99,14 @@ export const Input: React.FC<InputProps> = ({
           aria-invalid={hasError}
           aria-describedby={error ? `${inputId}-error` : hint ? `${inputId}-hint` : undefined}
           style={inputStyle}
+          onFocus={(e) => {
+            setFocused(true);
+            onFocus?.(e);
+          }}
+          onBlur={(e) => {
+            setFocused(false);
+            onBlur?.(e);
+          }}
           {...props}
         />
         {rightIcon && (
@@ -96,7 +114,7 @@ export const Input: React.FC<InputProps> = ({
             style={{
               position: 'absolute',
               right: '10px',
-              color: '#9ca3af',
+              color: 'var(--color-text-subtle)',
               display: 'flex',
             }}
           >
@@ -105,12 +123,19 @@ export const Input: React.FC<InputProps> = ({
         )}
       </div>
       {error && (
-        <span id={`${inputId}-error`} role="alert" style={{ fontSize: '12px', color: '#ef4444' }}>
+        <span
+          id={`${inputId}-error`}
+          role="alert"
+          style={{ fontSize: 'var(--text-xs)', color: 'var(--color-danger)' }}
+        >
           {error}
         </span>
       )}
       {hint && !error && (
-        <span id={`${inputId}-hint`} style={{ fontSize: '12px', color: '#6b7280' }}>
+        <span
+          id={`${inputId}-hint`}
+          style={{ fontSize: 'var(--text-xs)', color: 'var(--color-text-muted)' }}
+        >
           {hint}
         </span>
       )}

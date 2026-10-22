@@ -88,7 +88,7 @@ export const Modal: React.FC<ModalProps> = ({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: '16px',
+        padding: 'var(--space-4)',
       }}
       role="dialog"
       aria-modal="true"
@@ -98,7 +98,7 @@ export const Modal: React.FC<ModalProps> = ({
         style={{
           position: 'absolute',
           inset: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          backgroundColor: 'var(--color-overlay)',
         }}
         onClick={closeOnOverlayClick ? onClose : undefined}
         aria-hidden="true"
@@ -108,15 +108,16 @@ export const Modal: React.FC<ModalProps> = ({
         tabIndex={-1}
         style={{
           position: 'relative',
-          backgroundColor: '#ffffff',
-          borderRadius: '12px',
-          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+          backgroundColor: 'var(--color-surface)',
+          borderRadius: 'var(--radius-xl)',
+          boxShadow: 'var(--shadow-xl)',
           width: '100%',
           maxWidth: sizeMap[size],
           maxHeight: '90vh',
           display: 'flex',
           flexDirection: 'column',
           animation: 'modalEnter 0.2s ease-out',
+          outline: 'none',
         }}
       >
         <style>{`
@@ -131,14 +132,14 @@ export const Modal: React.FC<ModalProps> = ({
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              padding: '20px 24px',
-              borderBottom: '1px solid #e5e7eb',
+              padding: 'var(--space-5) var(--space-6)',
+              borderBottom: '1px solid var(--color-border)',
             }}
           >
             {title && (
               <h2
                 id="modal-title"
-                style={{ fontSize: '18px', fontWeight: 600, color: '#111827', margin: 0 }}
+                style={{ fontSize: 'var(--text-lg)', fontWeight: 'var(--weight-semibold)', color: 'var(--color-text)', margin: 0 }}
               >
                 {title}
               </h2>
@@ -150,9 +151,9 @@ export const Modal: React.FC<ModalProps> = ({
                   background: 'none',
                   border: 'none',
                   cursor: 'pointer',
-                  padding: '4px',
-                  color: '#6b7280',
-                  borderRadius: '4px',
+                  padding: 'var(--space-1)',
+                  color: 'var(--color-text-muted)',
+                  borderRadius: 'var(--radius-sm)',
                   display: 'flex',
                 }}
                 aria-label="Close modal"
@@ -164,15 +165,15 @@ export const Modal: React.FC<ModalProps> = ({
             )}
           </div>
         )}
-        <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>{children}</div>
+        <div style={{ padding: 'var(--space-6)', overflowY: 'auto', flex: 1 }}>{children}</div>
         {footer && (
           <div
             style={{
-              padding: '16px 24px',
-              borderTop: '1px solid #e5e7eb',
+              padding: 'var(--space-4) var(--space-6)',
+              borderTop: '1px solid var(--color-border)',
               display: 'flex',
               justifyContent: 'flex-end',
-              gap: '12px',
+              gap: 'var(--space-3)',
             }}
           >
             {footer}

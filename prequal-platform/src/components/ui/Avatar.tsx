@@ -17,10 +17,10 @@ const sizeMap: Record<AvatarSize, { container: number; font: number }> = {
 };
 
 const colors = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
+  'var(--color-primary)',
+  'var(--color-success)',
+  'var(--color-warning)',
+  'var(--color-danger)',
   '#8b5cf6',
   '#ec4899',
   '#06b6d4',
@@ -55,11 +55,11 @@ export const Avatar: React.FC<AvatarProps> = ({ name, src, size = 'md' }) => {
     justifyContent: 'center',
     width: `${containerSize}px`,
     height: `${containerSize}px`,
-    borderRadius: '50%',
+    borderRadius: 'var(--radius-full)',
     fontSize: `${fontSize}px`,
-    fontWeight: 600,
-    color: '#ffffff',
-    backgroundColor: src ? '#e5e7eb' : bgColor,
+    fontWeight: 'var(--weight-semibold)',
+    color: 'var(--color-text-inverse)',
+    backgroundColor: src ? 'var(--color-border)' : bgColor,
     overflow: 'hidden',
     flexShrink: 0,
   };
@@ -105,8 +105,8 @@ export const AvatarGroup: React.FC<AvatarGroupProps> = ({ children, max = 4 }) =
           style={{
             marginLeft: index === 0 ? 0 : '-8px',
             zIndex: visibleChildren.length - index,
-            border: '2px solid #ffffff',
-            borderRadius: '50%',
+            border: '2px solid var(--color-surface)',
+            borderRadius: 'var(--radius-full)',
           }}
         >
           {child}
@@ -121,12 +121,12 @@ export const AvatarGroup: React.FC<AvatarGroupProps> = ({ children, max = 4 }) =
             justifyContent: 'center',
             width: '32px',
             height: '32px',
-            borderRadius: '50%',
-            backgroundColor: '#e5e7eb',
-            border: '2px solid #ffffff',
+            borderRadius: 'var(--radius-full)',
+            backgroundColor: 'var(--color-surface-muted)',
+            border: '2px solid var(--color-surface)',
             fontSize: '11px',
-            fontWeight: 600,
-            color: '#6b7280',
+            fontWeight: 'var(--weight-semibold)',
+            color: 'var(--color-text-muted)',
             zIndex: 0,
           }}
           title={`${remainingCount} more`}

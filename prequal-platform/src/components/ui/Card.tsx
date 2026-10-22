@@ -23,10 +23,10 @@ export const Card: React.FC<CardProps> = ({
     <div
       className={className}
       style={{
-        backgroundColor: '#ffffff',
-        borderRadius: '8px',
-        border: '1px solid #e5e7eb',
-        boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
+        backgroundColor: 'var(--color-surface)',
+        borderRadius: 'var(--radius-lg)',
+        border: '1px solid var(--color-border)',
+        boxShadow: 'var(--shadow-sm)',
         overflow: 'hidden',
         ...style,
       }}
@@ -34,8 +34,8 @@ export const Card: React.FC<CardProps> = ({
       {(title || action) && (
         <div
           style={{
-            padding: '16px 20px',
-            borderBottom: '1px solid #e5e7eb',
+            padding: 'var(--space-4) var(--space-5)',
+            borderBottom: '1px solid var(--color-border)',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
@@ -43,12 +43,12 @@ export const Card: React.FC<CardProps> = ({
         >
           <div>
             {title && (
-              <h3 style={{ fontSize: '16px', fontWeight: 600, color: '#111827', margin: 0 }}>
+              <h3 style={{ fontSize: 'var(--text-base)', fontWeight: 'var(--weight-semibold)', color: 'var(--color-text)', margin: 0 }}>
                 {title}
               </h3>
             )}
             {description && (
-              <p style={{ fontSize: '14px', color: '#6b7280', margin: '4px 0 0 0' }}>
+              <p style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-muted)', margin: 'var(--space-1) 0 0 0' }}>
                 {description}
               </p>
             )}
@@ -56,7 +56,7 @@ export const Card: React.FC<CardProps> = ({
           {action && <div>{action}</div>}
         </div>
       )}
-      <div style={{ padding: noPadding ? 0 : '20px' }}>{children}</div>
+      <div style={{ padding: noPadding ? 0 : 'var(--space-5)' }}>{children}</div>
     </div>
   );
 };
@@ -70,8 +70,8 @@ export const CardHeader: React.FC<CardHeaderProps> = ({ children, className }) =
   <div
     className={className}
     style={{
-      padding: '16px 20px',
-      borderBottom: '1px solid #e5e7eb',
+      padding: 'var(--space-4) var(--space-5)',
+      borderBottom: '1px solid var(--color-border)',
     }}
   >
     {children}
@@ -84,7 +84,7 @@ interface CardContentProps {
 }
 
 export const CardContent: React.FC<CardContentProps> = ({ children, className }) => (
-  <div className={className} style={{ padding: '20px' }}>
+  <div className={className} style={{ padding: 'var(--space-5)' }}>
     {children}
   </div>
 );
@@ -98,9 +98,9 @@ export const CardFooter: React.FC<CardFooterProps> = ({ children, className }) =
   <div
     className={className}
     style={{
-      padding: '16px 20px',
-      borderTop: '1px solid #e5e7eb',
-      backgroundColor: '#f9fafb',
+      padding: 'var(--space-4) var(--space-5)',
+      borderTop: '1px solid var(--color-border)',
+      backgroundColor: 'var(--color-bg)',
     }}
   >
     {children}

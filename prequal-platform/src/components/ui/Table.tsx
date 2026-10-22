@@ -128,7 +128,7 @@ export function Table<T extends Record<string, unknown>>({
         <thead>
           <tr>
             {hasCheckbox && (
-              <th style={{ width: '48px', padding: '12px 16px', borderBottom: '2px solid #e5e7eb' }}>
+              <th style={{ width: '48px', padding: 'var(--space-3) var(--space-4)', borderBottom: '2px solid var(--color-border)' }}>
                 <input
                   type="checkbox"
                   checked={selectedKeys?.size === data.length && data.length > 0}
@@ -146,20 +146,17 @@ export function Table<T extends Record<string, unknown>>({
                 <th
                   key={String(column.key)}
                   style={{
-                    padding: '12px 16px',
+                    padding: 'var(--space-3) var(--space-4)',
                     textAlign: 'left',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    color: '#6b7280',
+                    fontSize: 'var(--text-xs)',
+                    fontWeight: 'var(--weight-semibold)',
+                    color: 'var(--color-text-muted)',
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
-                    borderBottom: '2px solid #e5e7eb',
+                    borderBottom: '2px solid var(--color-border)',
                     whiteSpace: 'nowrap',
                     width: column.width,
-                    cursor: isSortable ? 'pointer' : 'default',
-                    userSelect: 'none',
                   }}
-                  onClick={isSortable ? () => handleSort(String(column.key)) : undefined}
                   aria-sort={
                     activeSort?.key === column.key
                       ? activeSort.direction === 'asc'
@@ -168,10 +165,32 @@ export function Table<T extends Record<string, unknown>>({
                       : undefined
                   }
                 >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                    {column.header}
-                    {isSortable && <SortIcon direction={sortDirection} />}
-                  </span>
+                  {isSortable ? (
+                    <button
+                      type="button"
+                      onClick={() => handleSort(String(column.key))}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        padding: 0,
+                        font: 'inherit',
+                        letterSpacing: 'inherit',
+                        textTransform: 'inherit',
+                        color: 'inherit',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      {column.header}
+                      <SortIcon direction={sortDirection} />
+                    </button>
+                  ) : (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                      {column.header}
+                    </span>
+                  )}
                 </th>
               );
             })}
@@ -182,24 +201,24 @@ export function Table<T extends Record<string, unknown>>({
             Array.from({ length: 5 }).map((_, i) => (
               <tr key={`skeleton-${i}`}>
                 {hasCheckbox && (
-                  <td style={{ padding: '16px' }}>
+                  <td style={{ padding: 'var(--space-4)' }}>
                     <div
                       style={{
                         width: '16px',
                         height: '16px',
-                        backgroundColor: '#e5e7eb',
-                        borderRadius: '4px',
+                        backgroundColor: 'var(--color-border)',
+                        borderRadius: 'var(--radius-sm)',
                       }}
                     />
                   </td>
                 )}
                 {columns.map((_, j) => (
-                  <td key={`skeleton-${i}-${j}`} style={{ padding: '16px' }}>
+                  <td key={`skeleton-${i}-${j}`} style={{ padding: 'var(--space-4)' }}>
                     <div
                       style={{
                         height: '16px',
-                        backgroundColor: '#e5e7eb',
-                        borderRadius: '4px',
+                        backgroundColor: 'var(--color-border)',
+                        borderRadius: 'var(--radius-sm)',
                         width: `${70 + Math.random() * 30}%`,
                       }}
                     />
@@ -211,9 +230,9 @@ export function Table<T extends Record<string, unknown>>({
             <tr>
               <td
                 colSpan={columns.length + (hasCheckbox ? 1 : 0)}
-                style={{ padding: '48px 16px', textAlign: 'center' }}
+                style={{ padding: 'var(--space-12) var(--space-4)', textAlign: 'center' }}
               >
-                <span style={{ color: '#6b7280', fontSize: '14px' }}>{emptyMessage}</span>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: 'var(--text-sm)' }}>{emptyMessage}</span>
               </td>
             </tr>
           ) : (
@@ -221,6 +240,11 @@ export function Table<T extends Record<string, unknown>>({
               const rowKey = keyExtractor(row);
               const isSelected = selectedKeys?.has(rowKey);
               const isClickable = !!onRowClick;
+              const baseBackground = isSelected
+                ? 'var(--color-primary-subtle)'
+                : index % 2 === 0
+                  ? 'var(--color-surface)'
+                  : 'var(--color-bg)';
 
               return (
                 <tr
@@ -228,19 +252,19 @@ export function Table<T extends Record<string, unknown>>({
                   onClick={isClickable ? () => onRowClick(row) : undefined}
                   style={{
                     cursor: isClickable ? 'pointer' : 'default',
-                    backgroundColor: isSelected ? '#f0f9ff' : index % 2 === 0 ? '#ffffff' : '#f9fafb',
-                    transition: 'background-color 0.15s',
+                    backgroundColor: baseBackground,
+                    transition: 'background-color var(--transition-fast)',
                   }}
                   onMouseEnter={(e) => {
-                    if (!isSelected) e.currentTarget.style.backgroundColor = '#f3f4f6';
+                    if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--color-surface-muted)';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = isSelected ? '#f0f9ff' : index % 2 === 0 ? '#ffffff' : '#f9fafb';
+                    e.currentTarget.style.backgroundColor = baseBackground;
                   }}
                   aria-selected={isSelected}
                 >
                   {hasCheckbox && (
-                    <td style={{ padding: '16px', width: '48px' }}>
+                    <td style={{ padding: 'var(--space-4)', width: '48px' }}>
                       <input
                         type="checkbox"
                         checked={isSelected}
@@ -258,10 +282,10 @@ export function Table<T extends Record<string, unknown>>({
                       <td
                         key={`${rowKey}-${String(column.key)}`}
                         style={{
-                          padding: '16px',
-                          fontSize: '14px',
-                          color: '#374151',
-                          borderBottom: '1px solid #f3f4f6',
+                          padding: 'var(--space-4)',
+                          fontSize: 'var(--text-sm)',
+                          color: 'var(--color-text)',
+                          borderBottom: '1px solid var(--color-surface-muted)',
                         }}
                       >
                         {column.render ? column.render(value, row, index) : String(value ?? '')}
@@ -281,26 +305,26 @@ export function Table<T extends Record<string, unknown>>({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            padding: '16px',
-            borderTop: '1px solid #e5e7eb',
+            padding: 'var(--space-4)',
+            borderTop: '1px solid var(--color-border)',
           }}
         >
-          <span style={{ fontSize: '14px', color: '#6b7280' }}>
+          <span style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text-muted)' }}>
             Showing {(pagination.page - 1) * pagination.pageSize + 1} to{' '}
             {Math.min(pagination.page * pagination.pageSize, pagination.total)} of {pagination.total} results
           </span>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
             <button
               onClick={() => pagination.onPageChange(pagination.page - 1)}
               disabled={pagination.page === 1}
               style={{
                 padding: '8px 12px',
-                border: '1px solid #d1d5db',
-                borderRadius: '6px',
-                backgroundColor: '#ffffff',
-                color: pagination.page === 1 ? '#9ca3af' : '#374151',
+                border: '1px solid var(--color-border-strong)',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--color-surface)',
+                color: pagination.page === 1 ? 'var(--color-text-subtle)' : 'var(--color-text)',
                 cursor: pagination.page === 1 ? 'not-allowed' : 'pointer',
-                fontSize: '14px',
+                fontSize: 'var(--text-sm)',
               }}
               aria-label="Previous page"
             >
@@ -311,13 +335,13 @@ export function Table<T extends Record<string, unknown>>({
               disabled={pagination.page * pagination.pageSize >= pagination.total}
               style={{
                 padding: '8px 12px',
-                border: '1px solid #d1d5db',
-                borderRadius: '6px',
-                backgroundColor: '#ffffff',
+                border: '1px solid var(--color-border-strong)',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: 'var(--color-surface)',
                 color:
-                  pagination.page * pagination.pageSize >= pagination.total ? '#9ca3af' : '#374151',
+                  pagination.page * pagination.pageSize >= pagination.total ? 'var(--color-text-subtle)' : 'var(--color-text)',
                 cursor: pagination.page * pagination.pageSize >= pagination.total ? 'not-allowed' : 'pointer',
-                fontSize: '14px',
+                fontSize: 'var(--text-sm)',
               }}
               aria-label="Next page"
             >

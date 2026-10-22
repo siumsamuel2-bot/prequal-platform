@@ -14,31 +14,38 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantStyles: Record<ButtonVariant, React.CSSProperties> = {
   primary: {
-    backgroundColor: '#3b82f6',
-    color: '#ffffff',
-    border: 'none',
+    backgroundColor: 'var(--color-primary)',
+    color: 'var(--color-text-inverse)',
+    border: '1px solid transparent',
   },
   secondary: {
-    backgroundColor: '#ffffff',
-    color: '#374151',
-    border: '1px solid #d1d5db',
+    backgroundColor: 'var(--color-surface)',
+    color: 'var(--color-text)',
+    border: '1px solid var(--color-border-strong)',
   },
   danger: {
-    backgroundColor: '#ef4444',
-    color: '#ffffff',
-    border: 'none',
+    backgroundColor: 'var(--color-danger)',
+    color: 'var(--color-text-inverse)',
+    border: '1px solid transparent',
   },
   ghost: {
     backgroundColor: 'transparent',
-    color: '#374151',
-    border: 'none',
+    color: 'var(--color-text)',
+    border: '1px solid transparent',
   },
 };
 
+const hoverBackground: Record<ButtonVariant, string> = {
+  primary: 'var(--color-primary-hover)',
+  secondary: 'var(--color-surface-muted)',
+  danger: 'var(--color-danger-hover)',
+  ghost: 'var(--color-surface-muted)',
+};
+
 const sizeStyles: Record<ButtonSize, React.CSSProperties> = {
-  sm: { padding: '6px 12px', fontSize: '12px', borderRadius: '4px' },
-  md: { padding: '8px 16px', fontSize: '14px', borderRadius: '6px' },
-  lg: { padding: '12px 24px', fontSize: '16px', borderRadius: '8px' },
+  sm: { padding: '6px 12px', fontSize: 'var(--text-xs)', borderRadius: 'var(--radius-sm)' },
+  md: { padding: '8px 16px', fontSize: 'var(--text-sm)', borderRadius: 'var(--radius-md)' },
+  lg: { padding: '12px 24px', fontSize: 'var(--text-base)', borderRadius: 'var(--radius-lg)' },
 };
 
 export const Button: React.FC<ButtonProps> = ({
@@ -57,11 +64,11 @@ export const Button: React.FC<ButtonProps> = ({
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '8px',
-    fontWeight: 500,
+    gap: 'var(--space-2)',
+    fontWeight: 'var(--weight-medium)',
     cursor: disabled || loading ? 'not-allowed' : 'pointer',
     opacity: disabled || loading ? 0.6 : 1,
-    transition: 'all 0.2s ease',
+    transition: 'background-color var(--transition-fast), transform var(--transition-fast)',
     width: fullWidth ? '100%' : 'auto',
     ...variantStyles[variant],
     ...sizeStyles[size],
@@ -71,17 +78,18 @@ export const Button: React.FC<ButtonProps> = ({
   return (
     <button
       {...props}
+      aria-busy={loading || undefined}
       disabled={disabled || loading}
       style={baseStyle}
       onMouseEnter={(e) => {
         if (!disabled && !loading) {
-          e.currentTarget.style.opacity = '0.9';
+          e.currentTarget.style.backgroundColor = hoverBackground[variant];
           e.currentTarget.style.transform = 'translateY(-1px)';
         }
         props.onMouseEnter?.(e);
       }}
       onMouseLeave={(e) => {
-        e.currentTarget.style.opacity = disabled || loading ? '0.6' : '1';
+        e.currentTarget.style.backgroundColor = variantStyles[variant].backgroundColor ?? '';
         e.currentTarget.style.transform = 'translateY(0)';
         props.onMouseLeave?.(e);
       }}

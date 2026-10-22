@@ -1,4 +1,4 @@
-import React, { useId } from 'react';
+import React, { useId, useState } from 'react';
 
 interface CheckboxProps {
   checked?: boolean;
@@ -19,6 +19,8 @@ export const Checkbox: React.FC<CheckboxProps> = ({
 }) => {
   const generatedId = useId();
   const checkboxId = id || generatedId;
+  const [focused, setFocused] = useState(false);
+  const active = checked || indeterminate;
 
   return (
     <label
@@ -26,7 +28,7 @@ export const Checkbox: React.FC<CheckboxProps> = ({
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: '8px',
+        gap: 'var(--space-2)',
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.6 : 1,
       }}
@@ -36,10 +38,11 @@ export const Checkbox: React.FC<CheckboxProps> = ({
           position: 'relative',
           width: '18px',
           height: '18px',
-          borderRadius: '4px',
-          border: `2px solid ${checked || indeterminate ? '#3b82f6' : '#d1d5db'}`,
-          backgroundColor: checked || indeterminate ? '#3b82f6' : '#ffffff',
-          transition: 'all 0.15s ease',
+          borderRadius: 'var(--radius-sm)',
+          border: `2px solid ${active ? 'var(--color-primary)' : 'var(--color-border-strong)'}`,
+          backgroundColor: active ? 'var(--color-primary)' : 'var(--color-surface)',
+          boxShadow: focused ? 'var(--focus-ring)' : 'none',
+          transition: 'background-color var(--transition-fast), border-color var(--transition-fast)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -50,6 +53,8 @@ export const Checkbox: React.FC<CheckboxProps> = ({
           type="checkbox"
           checked={checked}
           onChange={(e) => onChange?.(e.target.checked)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           disabled={disabled}
           ref={(el) => {
             if (el) el.indeterminate = indeterminate;
@@ -60,7 +65,7 @@ export const Checkbox: React.FC<CheckboxProps> = ({
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
             <path
               d="M10 3L4.5 8.5L2 6"
-              stroke="#ffffff"
+              stroke="var(--color-text-inverse)"
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -69,13 +74,11 @@ export const Checkbox: React.FC<CheckboxProps> = ({
         )}
         {indeterminate && (
           <svg width="10" height="2" viewBox="0 0 10 2" fill="none">
-            <rect width="10" height="2" fill="#ffffff" rx="1" />
+            <rect width="10" height="2" fill="var(--color-text-inverse)" rx="1" />
           </svg>
         )}
       </span>
-      {label && (
-        <span style={{ fontSize: '14px', color: '#374151' }}>{label}</span>
-      )}
+      {label && <span style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text)' }}>{label}</span>}
     </label>
   );
 };

@@ -11,11 +11,31 @@ interface BadgeProps {
 }
 
 const variantStyles: Record<BadgeVariant, { bg: string; text: string; dot: string }> = {
-  default: { bg: '#f3f4f6', text: '#374151', dot: '#6b7280' },
-  success: { bg: '#d1fae5', text: '#065f46', dot: '#10b981' },
-  warning: { bg: '#fef3c7', text: '#92400e', dot: '#f59e0b' },
-  danger: { bg: '#fee2e2', text: '#991b1b', dot: '#ef4444' },
-  info: { bg: '#dbeafe', text: '#1e40af', dot: '#3b82f6' },
+  default: {
+    bg: 'var(--color-surface-muted)',
+    text: 'var(--color-text)',
+    dot: 'var(--color-text-muted)',
+  },
+  success: {
+    bg: 'var(--color-success-soft)',
+    text: 'var(--color-success-strong)',
+    dot: 'var(--color-success)',
+  },
+  warning: {
+    bg: 'var(--color-warning-soft)',
+    text: 'var(--color-warning-strong)',
+    dot: 'var(--color-warning)',
+  },
+  danger: {
+    bg: 'var(--color-danger-soft)',
+    text: 'var(--color-danger-strong)',
+    dot: 'var(--color-danger)',
+  },
+  info: {
+    bg: 'var(--color-info-soft)',
+    text: 'var(--color-info-strong)',
+    dot: 'var(--color-info)',
+  },
 };
 
 export const Badge: React.FC<BadgeProps> = ({
@@ -31,11 +51,11 @@ export const Badge: React.FC<BadgeProps> = ({
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: size === 'sm' ? '4px' : '6px',
+        gap: size === 'sm' ? 'var(--space-1)' : '6px',
         padding: size === 'sm' ? '2px 6px' : '4px 10px',
-        borderRadius: '9999px',
-        fontSize: size === 'sm' ? '11px' : '12px',
-        fontWeight: 500,
+        borderRadius: 'var(--radius-full)',
+        fontSize: size === 'sm' ? '11px' : 'var(--text-xs)',
+        fontWeight: 'var(--weight-medium)',
         backgroundColor: styles.bg,
         color: styles.text,
       }}
@@ -45,7 +65,7 @@ export const Badge: React.FC<BadgeProps> = ({
           style={{
             width: size === 'sm' ? '6px' : '8px',
             height: size === 'sm' ? '6px' : '8px',
-            borderRadius: '50%',
+            borderRadius: 'var(--radius-full)',
             backgroundColor: styles.dot,
           }}
         />

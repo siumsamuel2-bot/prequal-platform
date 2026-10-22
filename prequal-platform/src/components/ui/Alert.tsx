@@ -12,9 +12,9 @@ interface AlertProps {
 
 const variantConfig: Record<AlertVariant, { bg: string; border: string; iconColor: string; icon: React.ReactNode }> = {
   info: {
-    bg: '#eff6ff',
-    border: '#3b82f6',
-    iconColor: '#3b82f6',
+    bg: 'var(--color-info-subtle)',
+    border: 'var(--color-info)',
+    iconColor: 'var(--color-info)',
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
@@ -22,9 +22,9 @@ const variantConfig: Record<AlertVariant, { bg: string; border: string; iconColo
     ),
   },
   success: {
-    bg: '#ecfdf5',
-    border: '#10b981',
-    iconColor: '#10b981',
+    bg: 'var(--color-success-subtle)',
+    border: 'var(--color-success)',
+    iconColor: 'var(--color-success)',
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
@@ -32,9 +32,9 @@ const variantConfig: Record<AlertVariant, { bg: string; border: string; iconColo
     ),
   },
   warning: {
-    bg: '#fffbeb',
-    border: '#f59e0b',
-    iconColor: '#f59e0b',
+    bg: 'var(--color-warning-subtle)',
+    border: 'var(--color-warning)',
+    iconColor: 'var(--color-warning)',
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
@@ -42,9 +42,9 @@ const variantConfig: Record<AlertVariant, { bg: string; border: string; iconColo
     ),
   },
   error: {
-    bg: '#fef2f2',
-    border: '#ef4444',
-    iconColor: '#ef4444',
+    bg: 'var(--color-danger-subtle)',
+    border: 'var(--color-danger)',
+    iconColor: 'var(--color-danger)',
     icon: (
       <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
@@ -66,12 +66,12 @@ export const Alert: React.FC<AlertProps> = ({
     <div
       role="alert"
       style={{
-        padding: '12px 16px',
-        borderRadius: '8px',
+        padding: 'var(--space-3) var(--space-4)',
+        borderRadius: 'var(--radius-lg)',
         backgroundColor: config.bg,
         borderLeft: `4px solid ${config.border}`,
         display: 'flex',
-        gap: '12px',
+        gap: 'var(--space-3)',
         alignItems: 'flex-start',
       }}
     >
@@ -80,11 +80,11 @@ export const Alert: React.FC<AlertProps> = ({
       </span>
       <div style={{ flex: 1 }}>
         {title && (
-          <h4 style={{ fontSize: '14px', fontWeight: 600, color: '#374151', margin: '0 0 4px 0' }}>
+          <h4 style={{ fontSize: 'var(--text-sm)', fontWeight: 'var(--weight-semibold)', color: 'var(--color-text)', margin: '0 0 var(--space-1) 0' }}>
             {title}
           </h4>
         )}
-        <div style={{ fontSize: '14px', color: '#4b5563', lineHeight: 1.5 }}>
+        <div style={{ fontSize: 'var(--text-sm)', color: 'var(--color-text)', lineHeight: 'var(--leading-normal)' }}>
           {children}
         </div>
       </div>
@@ -96,8 +96,8 @@ export const Alert: React.FC<AlertProps> = ({
             border: 'none',
             padding: '2px',
             cursor: 'pointer',
-            color: '#9ca3af',
-            borderRadius: '4px',
+            color: 'var(--color-text-subtle)',
+            borderRadius: 'var(--radius-sm)',
             flexShrink: 0,
           }}
           aria-label="Dismiss"

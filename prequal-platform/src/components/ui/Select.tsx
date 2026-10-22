@@ -29,6 +29,7 @@ export const Select: React.FC<SelectProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
+  const [focused, setFocused] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const generatedId = useId();
   const selectId = id || generatedId;
@@ -66,9 +67,7 @@ export const Select: React.FC<SelectProps> = ({
         if (!isOpen) {
           setIsOpen(true);
         } else {
-          setHighlightedIndex((prev) =>
-            prev < options.length - 1 ? prev + 1 : prev
-          );
+          setHighlightedIndex((prev) => (prev < options.length - 1 ? prev + 1 : prev));
         }
         break;
       case 'ArrowUp':
@@ -83,6 +82,12 @@ export const Select: React.FC<SelectProps> = ({
     }
   };
 
+  const triggerBorder = error
+    ? 'var(--color-danger)'
+    : focused || isOpen
+      ? 'var(--color-primary)'
+      : 'var(--color-border-strong)';
+
   return (
     <div ref={containerRef} style={{ position: 'relative', width: '100%' }}>
       {label && (
@@ -90,10 +95,10 @@ export const Select: React.FC<SelectProps> = ({
           htmlFor={selectId}
           style={{
             display: 'block',
-            fontSize: '14px',
-            fontWeight: 500,
-            color: error ? '#ef4444' : '#374151',
-            marginBottom: '4px',
+            fontSize: 'var(--text-sm)',
+            fontWeight: 'var(--weight-medium)',
+            color: error ? 'var(--color-danger)' : 'var(--color-text)',
+            marginBottom: 'var(--space-1)',
           }}
         >
           {label}
@@ -104,6 +109,8 @@ export const Select: React.FC<SelectProps> = ({
         type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
         onKeyDown={handleKeyDown}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-invalid={!!error}
@@ -112,16 +119,18 @@ export const Select: React.FC<SelectProps> = ({
         style={{
           width: '100%',
           padding: '10px 12px',
-          fontSize: '14px',
-          borderRadius: '6px',
-          border: `1px solid ${error ? '#ef4444' : '#d1d5db'}`,
-          backgroundColor: disabled ? '#f9fafb' : '#ffffff',
-          color: selectedOption ? '#374151' : '#9ca3af',
+          fontSize: 'var(--text-sm)',
+          borderRadius: 'var(--radius-md)',
+          border: `1px solid ${triggerBorder}`,
+          boxShadow: focused || isOpen ? 'var(--focus-ring)' : 'none',
+          backgroundColor: disabled ? 'var(--color-bg)' : 'var(--color-surface)',
+          color: selectedOption ? 'var(--color-text)' : 'var(--color-text-subtle)',
           cursor: disabled ? 'not-allowed' : 'pointer',
           display: 'flex',
           justifyContent: 'space-between',
           alignItems: 'center',
           textAlign: 'left',
+          transition: 'border-color var(--transition-fast), box-shadow var(--transition-fast)',
         }}
       >
         <span>{selectedOption?.label || placeholder}</span>
@@ -132,7 +141,7 @@ export const Select: React.FC<SelectProps> = ({
           fill="currentColor"
           style={{
             transform: isOpen ? 'rotate(180deg)' : 'rotate(0)',
-            transition: 'transform 0.2s',
+            transition: 'transform var(--transition-fast)',
           }}
         >
           <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
@@ -146,12 +155,12 @@ export const Select: React.FC<SelectProps> = ({
             top: '100%',
             left: 0,
             right: 0,
-            marginTop: '4px',
-            padding: '4px',
-            backgroundColor: '#ffffff',
-            border: '1px solid #e5e7eb',
-            borderRadius: '6px',
-            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)',
+            marginTop: 'var(--space-1)',
+            padding: 'var(--space-1)',
+            backgroundColor: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-md)',
+            boxShadow: 'var(--shadow-lg)',
             zIndex: 10,
             maxHeight: '200px',
             overflowY: 'auto',
@@ -163,6 +172,7 @@ export const Select: React.FC<SelectProps> = ({
               key={option.value}
               role="option"
               aria-selected={option.value === value}
+              aria-disabled={option.disabled || undefined}
               onClick={() => {
                 if (!option.disabled) {
                   onChange?.(option.value);
@@ -172,12 +182,12 @@ export const Select: React.FC<SelectProps> = ({
               onMouseEnter={() => setHighlightedIndex(index)}
               style={{
                 padding: '8px 12px',
-                fontSize: '14px',
-                borderRadius: '4px',
+                fontSize: 'var(--text-sm)',
+                borderRadius: 'var(--radius-sm)',
                 cursor: option.disabled ? 'not-allowed' : 'pointer',
                 backgroundColor:
-                  highlightedIndex === index ? '#f3f4f6' : 'transparent',
-                color: option.disabled ? '#9ca3af' : '#374151',
+                  highlightedIndex === index ? 'var(--color-surface-muted)' : 'transparent',
+                color: option.disabled ? 'var(--color-text-subtle)' : 'var(--color-text)',
               }}
             >
               {option.label}
@@ -186,7 +196,11 @@ export const Select: React.FC<SelectProps> = ({
         </ul>
       )}
       {error && (
-        <span id={`${selectId}-error`} role="alert" style={{ fontSize: '12px', color: '#ef4444', marginTop: '4px' }}>
+        <span
+          id={`${selectId}-error`}
+          role="alert"
+          style={{ fontSize: 'var(--text-xs)', color: 'var(--color-danger)', marginTop: 'var(--space-1)' }}
+        >
           {error}
         </span>
       )}
