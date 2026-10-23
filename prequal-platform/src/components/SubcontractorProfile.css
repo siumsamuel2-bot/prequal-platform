@@ -1,109 +1,297 @@
 .subcontractor-profile {
-  max-width: 800px;
+  max-width: 900px;
   margin: 0 auto;
-  padding: var(--space-5);
+  padding: var(--space-6) var(--space-5);
   font-family: var(--font-sans);
-}
-
-.subcontractor-profile h1 {
   color: var(--color-text);
-  text-align: center;
-  margin-bottom: var(--space-5);
 }
 
-.header-section {
+.subcontractor-profile .profile-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  background-color: var(--color-primary);
-  color: var(--color-text-inverse);
-  padding: var(--space-3) var(--space-5);
-  border-radius: var(--radius-sm);
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
 }
 
-.user-info {
-  font-size: 0.9em;
-  color: var(--color-text-muted);
+.subcontractor-profile .profile-header h1 {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-2xl);
+  font-weight: var(--weight-bold);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
 }
 
-.action-buttons {
-  margin: var(--space-4) 0;
-  text-align: right;
-}
-
-.action-buttons button {
-  background-color: var(--color-primary);
-  color: var(--color-text-inverse);
+.subcontractor-profile .back-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
   border: none;
-  padding: var(--space-2) var(--space-4);
-  margin: 0 5px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text);
   font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
 }
 
-.action-buttons button:hover {
+.subcontractor-profile .back-btn:hover {
+  background-color: var(--color-primary-subtle);
+  color: var(--color-primary-active);
+}
+
+.subcontractor-profile .btn-download,
+.subcontractor-profile .btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background-color: var(--color-primary);
+  color: var(--color-text-inverse);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.subcontractor-profile .btn-download:hover,
+.subcontractor-profile .btn-primary:hover {
   background-color: var(--color-primary-hover);
 }
 
-.profile-section {
-  margin: var(--space-5) 0;
-  padding: var(--space-5);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background-color: var(--color-bg);
+.subcontractor-profile .btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
-.input-group {
-  margin: var(--space-4) 0;
+.subcontractor-profile .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
 }
 
-.input-group label {
-  display: block;
-  font-weight: bold;
-  margin-bottom: 5px;
-}
-
-.input-group input,
-.input-group textarea,
-.input-group .compliance-value {
-  width: 100%;
-  padding: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  box-sizing: border-box;
-}
-
-.compliance-score {
-  width: 100%;
+.subcontractor-profile .btn-secondary:hover {
   background-color: var(--color-surface-muted);
-  border-radius: var(--radius-sm);
-  padding: var(--space-3);
-  margin-top: 5px;
 }
 
-.progress-bar {
+.subcontractor-profile .status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-full);
+  background-color: var(--color-surface-muted);
+  color: var(--color-text);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-transform: capitalize;
+}
+
+.subcontractor-profile .status-badge.active,
+.subcontractor-profile .status-badge.status-valid,
+.subcontractor-profile .status-badge.status-resolved {
+  background-color: var(--color-success-soft);
+  color: var(--color-success-strong);
+}
+
+.subcontractor-profile .status-badge.status-expired,
+.subcontractor-profile .status-badge.blacklisted {
+  background-color: var(--color-danger-soft);
+  color: var(--color-danger-strong);
+}
+
+.subcontractor-profile .status-badge.status-open,
+.subcontractor-profile .status-badge.suspended {
+  background-color: var(--color-warning-soft);
+  color: var(--color-warning-strong);
+}
+
+.subcontractor-profile .profile-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.subcontractor-profile .profile-tabs button {
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: -1px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.subcontractor-profile .profile-tabs button:hover {
+  color: var(--color-text);
+}
+
+.subcontractor-profile .profile-tabs button.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.subcontractor-profile .profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.subcontractor-profile .form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.subcontractor-profile .form-group {
+  display: flex;
+  flex: 1 1 220px;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.subcontractor-profile .form-group label {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--color-text);
+}
+
+.subcontractor-profile .form-input {
   width: 100%;
-  height: 20px;
-  background-color: var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  margin: var(--space-3) 0;
-  overflow: hidden;
+  box-sizing: border-box;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
-.progress-fill {
-  height: 100%;
-  background-color: var(--color-success);
-  border-radius: var(--radius-sm);
-  transition: width var(--transition-base);
+.subcontractor-profile .form-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: var(--focus-ring);
 }
 
-.score-text {
-  font-weight: bold;
+.subcontractor-profile .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.subcontractor-profile .certifications-section,
+.subcontractor-profile .violations-section {
+  overflow-x: auto;
+}
+
+.subcontractor-profile .section-header {
+  margin-bottom: var(--space-4);
+}
+
+.subcontractor-profile .section-header h2 {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: var(--weight-semibold);
   color: var(--color-text);
 }
 
-.compliance-value {
-  font-weight: bold;
+.subcontractor-profile .data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.subcontractor-profile .data-table th {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 2px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-semibold);
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.subcontractor-profile .data-table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
   color: var(--color-text);
+  vertical-align: top;
+}
+
+.subcontractor-profile .data-table tbody tr:hover {
+  background-color: var(--color-surface-muted);
+}
+
+.subcontractor-profile .empty-state {
+  padding: var(--space-8);
+  border: 1px dashed var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .subcontractor-profile {
+    padding: var(--space-4) var(--space-3);
+  }
+
+  .subcontractor-profile .profile-header h1 {
+    flex-basis: 100%;
+    font-size: var(--text-xl);
+  }
+
+  .subcontractor-profile .form-row {
+    flex-direction: column;
+  }
+
+  .subcontractor-profile .form-group {
+    flex-basis: auto;
+  }
+
+  .subcontractor-profile .form-actions {
+    flex-direction: column-reverse;
+  }
+
+  .subcontractor-profile .form-actions .btn-primary,
+  .subcontractor-profile .form-actions .btn-secondary {
+    width: 100%;
+  }
+
+  .subcontractor-profile .profile-tabs {
+    overflow-x: auto;
+  }
+
+  .subcontractor-profile .profile-tabs button {
+    white-space: nowrap;
+  }
 }

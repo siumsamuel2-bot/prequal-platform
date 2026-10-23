@@ -4,6 +4,7 @@ import { subcontractorApi, certificationApi, violationApi, Subcontractor, Certif
 import DocumentUpload from './DocumentUpload';
 import { Loading } from './Loading';
 import { useToast } from './ToastContext';
+import './SubcontractorProfile.css';
 
 const SubcontractorProfile = () => {
   const { id } = useParams();
