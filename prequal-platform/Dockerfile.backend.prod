@@ -3,7 +3,7 @@
 # Optimized for size, build speed, and security
 
 # Stage 1: Build environment
-FROM python:3.11-alpine AS builder
+FROM python:3.15-alpine AS builder
 
 WORKDIR /app
 
@@ -28,7 +28,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN apk del .build-deps
 
 # Stage 2: Production image
-FROM python:3.11-alpine AS production
+FROM python:3.15-alpine AS production
 
 # Security: Create non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
